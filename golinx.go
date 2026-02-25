@@ -790,8 +790,9 @@ func localIdentity() string {
 // and the node's FQDN.
 func initTailscale() (*tsnet.Server, bool, string, error) {
 	tsSrv := &tsnet.Server{
-		Hostname: *tsHostname,
-		Dir:      *tsDir,
+		Hostname:      *tsHostname,
+		Dir:           *tsDir,
+		AdvertiseTags: []string{"tag:golinx"},
 		Logf: func(format string, args ...any) {
 			msg := fmt.Sprintf(format, args...)
 			if strings.Contains(msg, "login.tailscale") || strings.Contains(msg, "To authenticate") {

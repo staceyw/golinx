@@ -31,13 +31,9 @@ Replace the emails with the Tailscale login names of users who should have admin
 
 ---
 
-## Step 2: Tag the GoLinx Node
+## Step 2: Define the Tag Owner
 
-GoLinx runs as a tsnet node, which means it has its own identity on your tailnet. To target it in grants, you need to tag it.
-
-### 2a. Define the tag owner
-
-In your ACL policy file, add a `tagOwners` entry so your user account is allowed to claim the tag:
+GoLinx automatically advertises `tag:golinx` on your tailnet. For Tailscale to accept the tag, you need to define who owns it in your ACL policy file:
 
 ```jsonc
 {
@@ -49,24 +45,15 @@ In your ACL policy file, add a `tagOwners` entry so your user account is allowed
 
 Replace `your-login@example.com` with the Tailscale login of the person who runs the GoLinx server. You can also use a group (e.g. `group:golinx-admins`) as the tag owner.
 
-### 2b. What happens when you tag a node
+Once this is saved and GoLinx restarts, the node will appear as `tag:golinx` on the [Machines page](https://login.tailscale.com/admin/machines). The node may need to re-authenticate once.
 
-- The node's key expiry is **disabled** — no more 180-day reauth prompts (ideal for servers)
-- The node is **owned by the tag** instead of a user — this is fine for GoLinx since it's a service, not a personal device
-- The node **cannot access shared nodes** from other tailnets — irrelevant for GoLinx since it only receives requests
+**What tagging does:**
 
-### 2c. Apply the tag
+- Key expiry is **disabled** — no more 180-day reauth prompts (ideal for servers)
+- The node is **owned by the tag** instead of a user — this is fine for GoLinx since it's a service
+- The node **cannot initiate connections to shared nodes** — irrelevant for GoLinx since it only receives requests
 
-GoLinx does not currently set `AdvertiseTags` automatically. You can tag the node from the [Machines page](https://login.tailscale.com/admin/machines) in the Admin Console:
-
-1. Find the `go` machine (or whatever your `ts-hostname` is)
-2. Click the `...` menu → **Edit ACL tags...**
-3. Add `tag:golinx`
-4. Save
-
-The node may need to re-authenticate once. After that, key expiry is disabled.
-
-> **Alternative:** If you prefer to set the tag in code, you could add `AdvertiseTags: []string{"tag:golinx"}` to the `tsnet.Server` config in GoLinx's source. This would apply the tag automatically on startup.
+> **Note:** If `tagOwners` isn't configured yet, GoLinx still works normally — it just runs untagged. You only need the tag when you're ready to set up grants.
 
 ---
 
