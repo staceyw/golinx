@@ -69,7 +69,8 @@ Write-Host ""
 Write-Host "Installed to $InstallDir\" -ForegroundColor Green
 Write-Host ""
 Write-Host "Quick start:"
-Write-Host '  copy golinx.example.toml golinx.toml'
-Write-Host "  # Edit golinx.toml - add at least one listener"
-Write-Host "  .\golinx.exe"
+Write-Host '  1) .\golinx.exe --listen "http://:80"'
+Write-Host "  2) Click the URL in the terminal or open http://localhost in your browser."
+Write-Host ""
+Write-Host "For persistent config, copy golinx.example.toml to golinx.toml and run .\golinx.exe with no flags."
 Write-Host ""
