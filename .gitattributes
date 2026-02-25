@@ -1,0 +1,2 @@
+# Exclude helper scripts from GitHub language statistics
+scripts/* linguist-vendored
