@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 
 $Repo = "staceyw/GoLinx"
-$InstallDir = Join-Path $HOME "golinx"
+$InstallDir = $PWD.Path
 $BaseURL = "https://github.com/$Repo/releases/latest/download"
 
 # --- Detect architecture ---------------------------------------------------
@@ -38,12 +38,6 @@ Write-Host "  - golinx.example.toml (example config)"
 Write-Host "  - README.txt          (quick-start guide)"
 Write-Host ""
 
-# Check for existing install
-if (Test-Path $InstallDir) {
-    Write-Host "Warning: $InstallDir\ already exists. Files may be overwritten." -ForegroundColor Yellow
-    Write-Host ""
-}
-
 # Prompt for confirmation
 $answer = Read-Host "Continue? [Y/n]"
 if ($answer -match "^[nN]") {
@@ -52,10 +46,6 @@ if ($answer -match "^[nN]") {
 }
 
 # --- Download ---------------------------------------------------------------
-
-if (!(Test-Path $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir | Out-Null
-}
 
 function Download-File($url, $dest) {
     $name = Split-Path $dest -Leaf
@@ -79,7 +69,6 @@ Write-Host ""
 Write-Host "Installed to $InstallDir\" -ForegroundColor Green
 Write-Host ""
 Write-Host "Quick start:"
-Write-Host "  cd $InstallDir"
 Write-Host '  copy golinx.example.toml golinx.toml'
 Write-Host "  # Edit golinx.toml - add at least one listener"
 Write-Host "  .\golinx.exe"

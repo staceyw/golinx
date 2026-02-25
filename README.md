@@ -18,12 +18,11 @@ curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install
 iex (irm https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install.ps1)
 ```
 
-Downloads the binary, example config, and quick-start README into `~/golinx/`.
+Downloads the binary, example config, and quick-start README into the current directory.
 
 ## Quick Start
 
 ```bash
-cd ~/golinx
 cp golinx.example.toml golinx.toml
 # Edit golinx.toml — add at least one listener (e.g. http://:8080)
 ./golinx

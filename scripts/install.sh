@@ -4,7 +4,7 @@
 set -e
 
 REPO="staceyw/GoLinx"
-INSTALL_DIR="$HOME/golinx"
+INSTALL_DIR="$(pwd)"
 BASE_URL="https://github.com/$REPO/releases/latest/download"
 
 # --- Detect OS and architecture -------------------------------------------
@@ -42,12 +42,6 @@ echo "  - golinx.example.toml (example config)"
 echo "  - README.txt          (quick-start guide)"
 echo ""
 
-# Check for existing install
-if [ -d "$INSTALL_DIR" ]; then
-  echo "Warning: ${INSTALL_DIR}/ already exists. Files may be overwritten."
-  echo ""
-fi
-
 # Check for curl or wget
 FETCH=""
 if command -v curl >/dev/null 2>&1; then
@@ -71,8 +65,6 @@ case "$answer" in
 esac
 
 # --- Download --------------------------------------------------------------
-
-mkdir -p "$INSTALL_DIR"
 
 download() {
   url="$1"
@@ -98,7 +90,6 @@ echo ""
 echo "Installed to ${INSTALL_DIR}/"
 echo ""
 echo "Quick start:"
-echo "  cd ${INSTALL_DIR}"
 echo "  cp golinx.example.toml golinx.toml"
 echo "  # Edit golinx.toml — add at least one listener"
 echo "  ./golinx"

@@ -105,7 +105,7 @@ Write-Host "Creating release $Tag ..."
 $notes = @"
 ## Option 1: Install Script
 
-Run one command to download everything into ``~/golinx/`` (binary, config template, and quick-start README).
+Run one command to download everything into the current directory (binary, config template, and quick-start README).
 
 **Linux / macOS:**
 ``````
