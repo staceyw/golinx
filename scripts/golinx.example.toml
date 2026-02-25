@@ -1,0 +1,40 @@
+# GoLinx configuration
+# Copy to golinx.toml and edit for your environment.
+
+# Listener URIs (at least one required)
+#   http://[addr]:port                              - plain HTTP
+#   https://[addr]:port;cert=<path>;key=<path>      - HTTPS with your own certs
+#   ts+https://:port                                - Tailscale HTTPS (auto certs)
+#   ts+http://:port                                 - Tailscale plain HTTP
+# Host must be empty or an IP address — no hostnames.
+
+listen = [
+  "http://:80",
+  # "https://:443;cert=./cert.pem;key=./key.pem",
+  # "ts+http://:80",             # recommended for Tailscale (tailnet is already encrypted)
+  # "ts+https://:443",           # optional: add HTTPS for the FQDN (requires ts+http too)
+]
+
+# Tailscale node hostname (default: "go")
+ts-hostname = "go"
+
+# Enable verbose tsnet logging (default: false)
+verbose = false
+
+# Tailscale state directory (default: OS config dir, e.g. ~/.config/tsnet-golinx)
+# Override for Docker or other environments where you need a specific path.
+# ts-dir = "/data/tsnet"
+
+# Maximum link chain resolution depth (default: 5)
+# Controls how many hops a redirect follows through other local links,
+# and the loop detection depth when creating/updating links.
+# max-resolve-depth = 5
+
+# Admin users — configured via Tailscale ACL grants (not in this file).
+# See docs/tailscale-grants.md for setup instructions.
+
+# Permissions for non-localhost local users (default: ["*"] = full access).
+# Controls what LAN users can do when accessing via the local HTTP listener.
+# Localhost (127.0.0.1/::1) always has full admin access regardless of this setting.
+# Available permissions: "add", "update", "delete" — or ["*"] for all, [] for read-only.
+# user-perms = ["*"]

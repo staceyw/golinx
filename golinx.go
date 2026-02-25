@@ -734,12 +734,12 @@ func Run() error {
 				tsSrv.Close()
 				return fmt.Errorf("tsnet listen TLS :%s: %w", l.port, err)
 			}
-			go func(port string) {
-				fmt.Fprintf(os.Stderr, "Serving ts+https on https://%s:%s/\n", tsFQDN, port)
+			fmt.Fprintf(os.Stderr, "Serving ts+https on https://%s:%s/\n", tsFQDN, l.port)
+			go func() {
 				if err := http.Serve(ln, hstsHandler(httpHandler)); err != nil && !errors.Is(err, net.ErrClosed) {
-					errCh <- fmt.Errorf("tsnet HTTPS :%s: %w", port, err)
+					errCh <- fmt.Errorf("tsnet HTTPS :%s: %w", l.port, err)
 				}
-			}(l.port)
+			}()
 		case "ts+http":
 			ln, err := tsSrv.Listen("tcp", ":"+l.port)
 			if err != nil {
@@ -752,12 +752,12 @@ func Run() error {
 			} else {
 				handler = httpHandler
 			}
-			go func(port string, h http.Handler) {
-				fmt.Fprintf(os.Stderr, "Serving ts+http on http://%s:%s/\n", tsFQDN, port)
+			fmt.Fprintf(os.Stderr, "Serving ts+http on http://%s:%s/\n", tsFQDN, l.port)
+			go func(h http.Handler) {
 				if err := http.Serve(ln, h); err != nil && !errors.Is(err, net.ErrClosed) {
-					errCh <- fmt.Errorf("tsnet HTTP :%s: %w", port, err)
+					errCh <- fmt.Errorf("tsnet HTTP :%s: %w", l.port, err)
 				}
-			}(l.port, handler)
+			}(handler)
 		case "https":
 			srv := startLocalTLS(l, httpHandler, errCh)
 			servers = append(servers, srv)
@@ -773,6 +773,7 @@ func Run() error {
 		}
 	}
 
+	fmt.Fprintln(os.Stderr, "Running... Press Ctrl+C to quit.")
 	return awaitShutdown(errCh, servers, tsSrv)
 }
 
@@ -837,9 +838,9 @@ func initTailscale() (*tsnet.Server, bool, string, error) {
 // startLocalTLS starts a local HTTPS server in a goroutine.
 func startLocalTLS(l listener, handler http.Handler, errCh chan<- error) *http.Server {
 	srv := &http.Server{Addr: l.addr(), Handler: hstsHandler(handler)}
+	fmt.Fprintln(os.Stderr, "Serving HTTPS on:")
+	logListenURLs("https", l.host, l.port)
 	go func() {
-		fmt.Fprintln(os.Stderr, "Serving HTTPS on:")
-		logListenURLs("https", l.host, l.port)
 		if err := srv.ListenAndServeTLS(l.certFile, l.keyFile); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("local TLS: %w", err)
 		}
@@ -850,9 +851,9 @@ func startLocalTLS(l listener, handler http.Handler, errCh chan<- error) *http.S
 // startLocalHTTP starts a local HTTP server in a goroutine.
 func startLocalHTTP(l listener, handler http.Handler, errCh chan<- error) *http.Server {
 	srv := &http.Server{Addr: l.addr(), Handler: handler}
+	fmt.Fprintln(os.Stderr, "Serving HTTP on:")
+	logListenURLs("http", l.host, l.port)
 	go func() {
-		fmt.Fprintln(os.Stderr, "Serving HTTP on:")
-		logListenURLs("http", l.host, l.port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("local HTTP: %w", err)
 		}
