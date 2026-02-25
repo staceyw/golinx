@@ -11,8 +11,8 @@
 listen = [
   "http://:80",
   # "https://:443;cert=./cert.pem;key=./key.pem",
-  # "ts+https://:443",
-  # "ts+http://:80",
+  # "ts+http://:80",             # recommended for Tailscale (tailnet is already encrypted)
+  # "ts+https://:443",           # optional: add HTTPS for the FQDN (requires ts+http too)
 ]
 
 # Tailscale node hostname (default: "go")

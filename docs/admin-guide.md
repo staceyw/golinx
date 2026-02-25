@@ -69,16 +69,16 @@ With a config file, just run `./golinx` — no flags needed. Command-line flags 
 
 ## Why You Need an HTTP Listener
 
-Modern browsers try HTTPS first when you type a bare hostname like `go/cal`. If the HTTPS certificate doesn't match the short name (Tailscale certs are issued for the FQDN, e.g. `go.example.ts.net`, not `go`), the browser falls back to HTTP on port 80. Without an HTTP listener, that fallback times out.
+Modern browsers try HTTPS first when you type a bare hostname like `go/cal`. Tailscale certs are issued for the FQDN (e.g. `go.example.ts.net`), not the bare name `go`, so the HTTPS attempt fails and the browser falls back to HTTP on port 80. Without an HTTP listener, that fallback times out.
 
-**Always pair an HTTPS listener with its HTTP counterpart:**
+**Recommended:** Use `ts+http://:80` as your Tailscale listener. Your tailnet traffic is already encrypted by WireGuard, so HTTPS is optional. This is the simplest setup and works with both `go/cal` and `go.your-tailnet.ts.net`.
+
+**Optional:** If you want HTTPS for the FQDN, add both listeners. The HTTP listener catches the browser fallback and redirects to HTTPS:
 
 | HTTPS listener | Required HTTP listener | Why |
 |----------------|----------------------|-----|
 | `ts+https://:443` | `ts+http://:80` | Catches browser fallback from `go/` short name |
 | `https://:443;cert=...;key=...` | `http://:80` | Catches browser fallback from LAN hostname |
-
-The HTTP listener automatically redirects to the HTTPS FQDN, so the final page loads with a valid certificate.
 
 ## HTTPS Redirect
 
