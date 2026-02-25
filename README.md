@@ -23,16 +23,18 @@ Downloads the binary, example config, and quick-start README into the current di
 ## Quick Start
 
 ```bash
-cp golinx.example.toml golinx.toml
-# Edit golinx.toml — add at least one listener (e.g. http://:8080)
-./golinx
+./golinx --listen "http://:80"
 ```
 
 Or build from source:
 
 ```bash
-go build -o golinx . && ./golinx --listen "http://:8080"
+go build -o golinx . && ./golinx --listen "http://:80"
 ```
+
+Open `http://localhost` — done. For persistent configuration, copy `golinx.example.toml` to `golinx.toml` and run `./golinx` with no flags.
+
+> Port 80 is required for `go/link` to work in the browser — see [Making `go/link` Work](docs/admin-guide.md#making-golink-work) in the admin guide. On Linux, use `sudo` if port 80 is restricted.
 
 ## Highlights
 
@@ -58,9 +60,10 @@ go build -o golinx . && ./golinx --listen "http://:8080"
 
 | Guide | Description |
 |-------|-------------|
-| [In-App Help](docs/app-help.md) | Quick reference for using the UI — search, shortcuts, themes, permissions |
-| [Admin Guide](docs/admin-guide.md) | Configuration, listener URIs, HTTPS, permissions, API, development setup |
-| [Tailscale Grants](docs/tailscale-grants.md) | Step-by-step setup for admin access via Tailscale ACL grants |
+| [Admin Guide](docs/admin-guide.md) | Configuration, listener URIs, HTTP vs HTTPS, permissions, API reference, development setup |
+| [In-App Help](docs/app-help.md) | Quick reference for using the UI — search, shortcuts, themes, sorting, views, tags |
+| [Tailscale Grants](docs/tailscale-grants.md) | Step-by-step setup for admin access via Tailscale ACL groups, node tagging, and grants |
+| [Destination URL Templates](docs/dest-url-help.md) | Go template syntax for dynamic URLs — path passthrough, query parameters, built-in functions |
 
 In-app help is also available at `/.help` or by pressing **F1**.
 

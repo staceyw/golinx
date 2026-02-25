@@ -69,6 +69,15 @@ a:hover{text-decoration:underline}
 .feature h3{font-size:0.9rem;color:#89b4fa;margin-bottom:4px}
 .feature p{font-size:0.85rem;color:#a6adc8}
 
+/* Docs */
+.docs{padding:40px 0}
+.docs h2{font-size:1.5rem;color:#cdd6f4;text-align:center;margin-bottom:20px}
+.doc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.doc-card{display:block;background:#181825;border:1px solid #313244;border-radius:8px;padding:16px;transition:border-color 0.15s,background 0.15s}
+.doc-card:hover{border-color:#45475a;background:#1e1e2e;text-decoration:none}
+.doc-card h3{font-size:0.9rem;color:#89b4fa;margin-bottom:4px}
+.doc-card p{font-size:0.85rem;color:#a6adc8;margin:0}
+
 /* Footer */
 .footer{text-align:center;padding:40px 0 60px;color:#6c7086;font-size:0.85rem;border-top:1px solid #313244;margin-top:20px}
 .footer a{color:#89b4fa}
@@ -141,17 +150,17 @@ a:hover{text-decoration:underline}
       <div class="step">
         <div class="num">1</div>
         <h3>Configure</h3>
-        <p>Rename <code>golinx.example.toml</code> to <code>golinx.toml</code> and add a listener.</p>
+        <p>Rename <code>golinx.example.toml</code> to <code>golinx.toml</code> and set your listener.</p>
       </div>
       <div class="step">
         <div class="num">2</div>
         <h3>Run</h3>
-        <p>Double-click the binary or run from a terminal:<br><code>./golinx</code></p>
+        <p>Run from a terminal:<br><code>./golinx</code> or <code>./golinx --listen "http://:80"</code></p>
       </div>
       <div class="step">
         <div class="num">3</div>
         <h3>Use</h3>
-        <p>Open your browser to <code>http://localhost:8080</code> and start adding links.</p>
+        <p>Open <code>http://localhost</code> and start adding links.</p>
       </div>
     </div>
   </div>
@@ -186,8 +195,30 @@ a:hover{text-decoration:underline}
     </div>
   </div>
 
+  <div class="docs" id="docs">
+    <h2>Documentation</h2>
+    <div class="doc-grid">
+      <a class="doc-card" href="https://github.com/staceyw/GoLinx/blob/main/docs/admin-guide.md">
+        <h3>Admin Guide</h3>
+        <p>Configuration, listener URIs, HTTP vs HTTPS, permissions, API reference, and development setup.</p>
+      </a>
+      <a class="doc-card" href="https://github.com/staceyw/GoLinx/blob/main/docs/app-help.md">
+        <h3>App Help</h3>
+        <p>Using the UI — search, keyboard shortcuts, themes, sorting, views, tags, and permissions.</p>
+      </a>
+      <a class="doc-card" href="https://github.com/staceyw/GoLinx/blob/main/docs/tailscale-grants.md">
+        <h3>Tailscale Grants</h3>
+        <p>Step-by-step setup for admin access via Tailscale ACL groups, node tagging, and grants.</p>
+      </a>
+      <a class="doc-card" href="https://github.com/staceyw/GoLinx/blob/main/docs/dest-url-help.md">
+        <h3>Destination URL Templates</h3>
+        <p>Go template syntax for dynamic URLs — path passthrough, query parameters, and built-in functions.</p>
+      </a>
+    </div>
+  </div>
+
   <div class="footer">
-    <p><a href="https://github.com/staceyw/GoLinx">GitHub</a> &middot; <a href="https://github.com/staceyw/GoLinx#readme">Documentation</a> &middot; <a href="https://github.com/staceyw/GoLinx/releases">All Releases</a></p>
+    <p><a href="https://github.com/staceyw/GoLinx">GitHub</a> &middot; <a href="#docs">Documentation</a> &middot; <a href="https://github.com/staceyw/GoLinx/releases">All Releases</a></p>
     <p style="margin-top:8px">BSD 3-Clause License</p>
   </div>
 

@@ -6,10 +6,12 @@ Everything you need to install, configure, and operate GoLinx.
 
 ```bash
 go build -o golinx .
-./golinx --listen "http://:8080"
+./golinx --listen "http://:80"
 ```
 
-Open `http://localhost:8080` — GoLinx starts with an empty database, ready to use.
+Open `http://localhost` — GoLinx starts with an empty database, ready to use.
+
+> **Why port 80?** Short links like `go/jira` only work when the server is on port 80 — that's the default port browsers use for HTTP. If you use port 8080, users would have to type `go:8080/jira`. On Linux, use `sudo` if port 80 is restricted. See [Making `go/link` Work](#making-golink-work) for the full explanation.
 
 ## Listener URIs
 
@@ -28,11 +30,11 @@ Host must be empty or an IP address — hostnames are not allowed in listener UR
 
 | Scenario | Command |
 |----------|---------|
-| HTTP only on LAN | `./golinx --listen "http://:8080"` |
+| HTTP only on LAN | `./golinx --listen "http://:80"` |
 | HTTPS with own certs | `./golinx --listen "https://:443;cert=cert.pem;key=key.pem"` |
 | HTTPS + HTTP redirect | `./golinx --listen "http://:80" --listen "https://:443;cert=cert.pem;key=key.pem"` |
 | Tailscale HTTPS | `./golinx --ts-hostname go --listen "ts+https://:443" --listen "ts+http://:80"` |
-| Tailscale + local LAN | `./golinx --ts-hostname go --listen "ts+https://:443" --listen "ts+http://:80" --listen "http://:8080"` |
+| Tailscale + local LAN | `./golinx --ts-hostname go --listen "ts+https://:443" --listen "ts+http://:80" --listen "http://:80"` |
 
 **Identity:** Tailscale listeners use WhoIs login. Local listeners use `local@<hostname>`. Mixed mode falls back to local identity for non-tailnet requests.
 
@@ -44,7 +46,7 @@ Place a `golinx.toml` in the working directory to avoid repeating flags:
 listen = [
   "ts+https://:443",
   "ts+http://:80",
-  "http://:8080",
+  "http://:80",
 ]
 ts-hostname = "go"
 verbose = false
@@ -53,7 +55,19 @@ max-resolve-depth = 5
 # user-perms = ["*"]  # LAN user permissions: "add", "update", "delete", or ["*"] for all
 ```
 
-With a config file, just run `./golinx` — no flags needed. Command-line flags override config file values (with a warning).
+With a config file, just run `./golinx` — no flags needed.
+
+### CLI and config file merge behavior
+
+GoLinx always reads `golinx.toml` if it exists in the working directory, even when CLI flags are provided. The merge rules:
+
+- **`--listen`** — CLI listeners **replace** config listeners entirely (they are not combined). If no `--listen` flags are given, the config file's `listen` array is used.
+- **All other flags** (`--verbose`, `--ts-hostname`, `--ts-dir`, `--max-resolve-depth`) — a CLI flag wins only if explicitly set. Otherwise the config file value is used.
+- **`user-perms`** — config file only, no CLI flag.
+
+If any CLI flags are set and a config file exists, GoLinx prints a warning: `command-line flags override golinx.toml settings`.
+
+This means `./golinx --listen "http://:80"` still picks up `ts-hostname`, `verbose`, `user-perms`, etc. from the config file — it only overrides the listeners.
 
 ## Global Flags
 
