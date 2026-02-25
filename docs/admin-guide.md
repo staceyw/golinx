@@ -67,18 +67,20 @@ With a config file, just run `./golinx` — no flags needed. Command-line flags 
 | `--import <file>` | — | Import linx from a JSON backup and exit |
 | `--resolve <file> <path>` | — | Resolve a short link from a JSON backup and exit |
 
-## Why You Need an HTTP Listener
+## Why HTTP is Recommended for Tailscale
 
-Modern browsers try HTTPS first when you type a bare hostname like `go/cal`. Tailscale certs are issued for the FQDN (e.g. `go.example.ts.net`), not the bare name `go`, so the HTTPS attempt fails and the browser falls back to HTTP on port 80. Without an HTTP listener, that fallback times out.
+The whole point of a short link service is typing `go/jira` in your browser's address bar — minimal and fast. This only works over HTTP. Here's why:
 
-**Recommended:** Use `ts+http://:80` as your Tailscale listener. Your tailnet traffic is already encrypted by WireGuard, so HTTPS is optional. This is the simplest setup and works with both `go/cal` and `go.your-tailnet.ts.net`.
+Tailscale HTTPS certs are issued for the FQDN (e.g. `go.example.ts.net`), not the bare name `go`. If you only have an HTTPS listener, typing `go/jira` fails — the browser tries HTTPS, the cert doesn't match `go`, and there's nothing to fall back to. You'd have to type `go.example.ts.net/jira` every time, which defeats the purpose.
 
-**Optional:** If you want HTTPS for the FQDN, add both listeners. The HTTP listener catches the browser fallback and redirects to HTTPS:
+**Recommended:** Use `ts+http://:80` as your Tailscale listener. Your tailnet traffic is already encrypted by WireGuard, so HTTPS adds no real security benefit. This gives you the clean `go/link` experience.
+
+**Optional:** If you also want HTTPS for the FQDN (e.g. for bookmarking `https://go.example.ts.net`), add both listeners. The HTTP listener catches `go/link` requests, and HTTPS serves the FQDN:
 
 | HTTPS listener | Required HTTP listener | Why |
 |----------------|----------------------|-----|
-| `ts+https://:443` | `ts+http://:80` | Catches browser fallback from `go/` short name |
-| `https://:443;cert=...;key=...` | `http://:80` | Catches browser fallback from LAN hostname |
+| `ts+https://:443` | `ts+http://:80` | `go/link` falls back to HTTP since the cert only covers the FQDN |
+| `https://:443;cert=...;key=...` | `http://:80` | Same fallback behavior for LAN hostnames |
 
 ## HTTPS Redirect
 
