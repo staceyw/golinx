@@ -37,12 +37,11 @@ a:hover{text-decoration:underline}
 .install-script{max-width:660px;margin:0 auto;text-align:left}
 .install-script .os-label{font-size:0.85rem;color:#a6adc8;margin-bottom:4px;margin-top:16px}
 .install-script .os-label:first-child{margin-top:0}
-.cmd-wrap{position:relative}
-.install-script pre{background:#181825;border:1px solid #313244;border-radius:8px;padding:14px 48px 14px 16px;overflow-x:auto;font-size:0.85rem;color:#f9e2af;margin-bottom:0}
-.cmd-wrap:hover pre{border-color:#585b70}
-.copy-btn{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:1px solid #45475a;border-radius:4px;color:#6c7086;font-size:0.75rem;padding:4px 8px;cursor:pointer;transition:color 0.15s,border-color 0.15s}
-.copy-btn:hover{color:#cdd6f4;border-color:#585b70}
-.copy-btn.copied{color:#a6e3a1;border-color:#a6e3a1}
+.cmd-wrap{display:flex;align-items:stretch}
+.install-script pre{background:#181825;border:1px solid #313244;border-radius:8px 0 0 8px;padding:14px 16px;overflow-x:auto;font-size:0.85rem;color:#f9e2af;margin-bottom:0;flex:1}
+.copy-btn{background:#181825;border:1px solid #313244;border-left:none;border-radius:0 8px 8px 0;color:#6c7086;font-size:0.75rem;padding:0 14px;cursor:pointer;white-space:nowrap;transition:color 0.15s,background 0.15s}
+.copy-btn:hover{color:#cdd6f4;background:#313244}
+.copy-btn.copied{color:#a6e3a1}
 .install-subtitle{color:#a6adc8;margin-bottom:20px;font-size:0.95rem}
 .download-grid{display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
 .download-btn{display:inline-flex;align-items:center;gap:8px;padding:12px 24px;background:#313244;border:1px solid #45475a;border-radius:8px;color:#cdd6f4;font-size:0.95rem;font-weight:500;transition:background 0.15s,border-color 0.15s}
