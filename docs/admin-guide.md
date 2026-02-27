@@ -13,6 +13,34 @@ Open `http://localhost` — GoLinx starts with an empty database, ready to use.
 
 > **Why port 80?** Short links like `go/jira` only work when the server is on port 80 — that's the default port browsers use for HTTP. If you use port 8080, users would have to type `go:8080/jira`. On Linux, use `sudo` if port 80 is restricted. See [Making `go/link` Work](#making-golink-work) for the full explanation.
 
+## Linux Service (systemd)
+
+To install GoLinx as a background service that starts on boot (e.g. on a Raspberry Pi or Linux server):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-service.sh | sudo bash
+```
+
+The script will prompt you for:
+
+| Prompt | Default | Description |
+|--------|---------|-------------|
+| Data directory | `/home/<user>/golinx` | Where `golinx.toml` and `golinx.db` are stored |
+| Listener URI | `http://:80` | The listener to configure (supports `ts+http://`, `ts+https://`, etc.) |
+| Tailscale hostname | `go` | Only prompted if listener is `ts+*` |
+| Run-as user | Owner of data directory | The OS user the service runs as |
+
+After install, manage the service with:
+
+```bash
+sudo systemctl status golinx       # check status
+journalctl -u golinx -f            # view logs
+sudo systemctl stop golinx         # stop
+sudo systemctl restart golinx      # restart
+```
+
+To change settings, edit the config file shown at the end of the install, then `sudo systemctl restart golinx`.
+
 ## Listener URIs
 
 Each `--listen` flag takes a self-describing URI. Combine multiple `--listen` flags to run listeners together.
@@ -62,8 +90,8 @@ With a config file, just run `./golinx` — no flags needed.
 GoLinx always reads `golinx.toml` if it exists in the working directory, even when CLI flags are provided. The merge rules:
 
 - **`--listen`** — CLI listeners **replace** config listeners entirely (they are not combined). If no `--listen` flags are given, the config file's `listen` array is used.
-- **All other flags** (`--verbose`, `--ts-hostname`, `--ts-dir`, `--max-resolve-depth`) — a CLI flag wins only if explicitly set. Otherwise the config file value is used.
-- **`user-perms`** — config file only, no CLI flag.
+- **All other flags** (`--verbose`, `--ts-hostname`, `--ts-dir`, `--max-resolve-depth`, `--user-perms`) — a CLI flag wins only if explicitly set. Otherwise the config file value is used.
+- **`--user-perms`** — CLI accepts a comma-separated string (e.g. `--user-perms "add,update"`), config uses an array (e.g. `user-perms = ["add", "update"]`).
 
 If any CLI flags are set and a config file exists, GoLinx prints a warning: `command-line flags override golinx.toml settings`.
 
@@ -75,8 +103,9 @@ This means `./golinx --listen "http://:80"` still picks up `ts-hostname`, `verbo
 |------|---------|-------------|
 | `--listen` | (repeatable) | Listener URI — at least one required |
 | `--verbose` | `false` | Verbose tsnet logging |
-| `--ts-hostname` | — | Tailscale node hostname (required for `ts+*` listeners) |
+| `--ts-hostname` | `go` | Tailscale node hostname (required for `ts+*` listeners) |
 | `--ts-dir` | OS config dir | Tailscale state directory (e.g. `~/.config/tsnet-golinx`) |
+| `--user-perms` | `*` | LAN user permissions: comma-separated `add`,`update`,`delete`, or `*` for all |
 | `--max-resolve-depth` | `5` | Maximum link chain resolution depth |
 | `--import <file>` | — | Import linx from a JSON backup and exit |
 | `--resolve <file> <path>` | — | Resolve a short link from a JSON backup and exit |
@@ -113,24 +142,37 @@ Local DNS is the only practical option for more than a couple of machines. Hosts
 
 3. **Without an HTTP listener, there's nothing to fall back to** — If you only run HTTPS, the fallback fails and the user gets a connection error. The only way to reach the service would be typing `https://go.example.ts.net/jira` every time — defeating the purpose entirely.
 
+### Bare hostname vs FQDN
+
+Browsers treat bare hostnames (no dots) and fully-qualified domain names (with dots) differently:
+
+| What you type | Browser sees | What happens |
+|---------------|-------------|--------------|
+| `go/link` | Bare hostname (no dot) | Browser tries HTTPS, fails, **falls back to HTTP** on port 80 |
+| `go.example.ts.net/link` | FQDN (has dots) | Browser upgrades to HTTPS — **no HTTP fallback** |
+
+This is a browser heuristic, not a server setting. Browsers assume bare names are likely local/intranet and allow HTTP fallback. FQDNs look like "real" internet domains, so browsers enforce HTTPS strictly — if port 443 isn't listening, you get a connection error with no fallback attempt.
+
 ### The recommendation
 
-**Use `ts+http://:80`** (Tailscale) or **`http://:80`** (LAN) as your listener. This is not a security compromise:
+**Always include an HTTP listener** — `go/link` requires it. This is not a security compromise:
 
-- **Tailscale:** Your tailnet traffic is already encrypted by WireGuard end-to-end. HTTPS on top of WireGuard is double-encryption with no security benefit.
-- **LAN:** Traffic stays on your local network. If you need encryption on LAN, use HTTPS for the FQDN and HTTP for the bare hostname (see table below).
+- **Tailscale:** Your tailnet traffic is already encrypted by WireGuard end-to-end. HTTPS on top adds no security benefit.
+- **LAN:** Traffic stays on your local network.
 - **Industry standard:** Every go-link service in production (Google's original, Tailscale's [golink](https://github.com/tailscale/golink), GoLinks SaaS) uses HTTP for the bare hostname.
 
-**Optionally add HTTPS** if you also want the FQDN to work (e.g. for bookmarks or sharing `https://go.example.ts.net/jira`):
+**Add an HTTPS listener** if you also want the FQDN to work (e.g. for bookmarks or sharing `https://go.example.ts.net/jira`):
 
 | HTTPS listener | Required HTTP listener | Why |
 |----------------|----------------------|-----|
 | `ts+https://:443` | `ts+http://:80` | `go/link` needs HTTP — the cert only covers the FQDN |
 | `https://:443;cert=...;key=...` | `http://:80` | Same — bare hostnames can't use HTTPS |
 
-### Browser notes
+> **TL;DR:** Run **both HTTP and HTTPS** listeners. HTTP serves `go/link`. HTTPS serves the FQDN. HTTP-only works for bare hostnames but the FQDN will fail on modern browsers. Both together always works.
 
-- **Chrome** — Handles `go/link` automatically. No configuration needed.
+### Browser-specific notes
+
+- **Chrome** — Handles `go/link` automatically. Auto-upgrades FQDNs to HTTPS (via HTTPS-First mode), so the FQDN requires an HTTPS listener.
 - **Firefox** — May treat `go/link` as a search query. Fix: open `about:config` and add `browser.fixup.domainwhitelist.go` as a boolean set to `true`.
 - **Safari** — Works automatically on most configurations.
 

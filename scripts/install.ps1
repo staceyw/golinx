@@ -35,7 +35,6 @@ Write-Host ""
 Write-Host "This will download into ${InstallDir}\:"
 Write-Host "  - golinx.exe          (binary)"
 Write-Host "  - golinx.example.toml (example config)"
-Write-Host "  - README.txt          (quick-start guide)"
 Write-Host ""
 
 # Prompt for confirmation
@@ -61,7 +60,22 @@ function Download-File($url, $dest) {
 Write-Host ""
 Download-File "$BaseURL/$Binary" (Join-Path $InstallDir "golinx.exe")
 Download-File "$BaseURL/golinx.example.toml" (Join-Path $InstallDir "golinx.example.toml")
-Download-File "$BaseURL/README.txt" (Join-Path $InstallDir "README.txt")
+
+# --- Generate readme.txt ---------------------------------------------------
+
+@"
+GoLinx - URL shortener and people directory
+
+Quick Start:
+  1. Run:  .\golinx.exe --listen "http://:80"
+  2. Click the URL in the terminal or open http://localhost in your browser.
+
+For persistent config, copy golinx.example.toml to golinx.toml and run .\golinx.exe with no flags.
+
+Project page:    https://staceyw.github.io/GoLinx
+Documentation:   https://github.com/staceyw/GoLinx#documentation
+"@ | Set-Content -Path (Join-Path $InstallDir "readme.txt") -Encoding UTF8
+Write-Host "  readme.txt"
 
 # --- Done -------------------------------------------------------------------
 

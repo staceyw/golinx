@@ -62,39 +62,23 @@ try {
 Write-Host ""
 Write-Host "Preparing common assets ..."
 $example = Join-Path $root "golinx.example.toml"
-
-$readme = Join-Path $dist "README.txt"
-@"
-GoLinx - URL shortener and people directory
-
-Quick Start:
-  1. Copy golinx.example.toml to golinx.toml
-  2. Edit golinx.toml - add at least one listener (e.g. http://:8080)
-  3. Run:  ./golinx
-  4. Open: http://localhost:8080
-
-Full documentation: https://github.com/staceyw/GoLinx
-"@ | Set-Content -Path $readme -Encoding UTF8
-
 $config = Join-Path $dist "golinx.example.toml"
 Copy-Item $example $config
 
-# Collect all assets (binaries + common files)
+# Collect all assets (binaries + config)
 $assets = @()
 foreach ($t in $targets) {
     $assets += Join-Path $dist $t.Out
 }
-$assets += $readme
 $assets += $config
 
-Write-Host "  README.txt"
 Write-Host "  golinx.example.toml"
 
 if ($DryRun) {
     Write-Host ""
     Write-Host "Dry run complete. Artifacts in: $dist"
     Write-Host "  Binaries: $($targets.Count)"
-    Write-Host "  Common:   README.txt, golinx.example.toml"
+    Write-Host "  Common:   golinx.example.toml"
     Write-Host "Re-run without -DryRun to upload to GitHub."
     return
 }
@@ -105,7 +89,7 @@ Write-Host "Creating release $Tag ..."
 $notes = @"
 ## Option 1: Install Script
 
-Run one command to download everything into the current directory (binary, config template, and quick-start README).
+Run one command to download everything into the current directory (binary and config template).
 
 **Linux / macOS:**
 ``````
@@ -119,7 +103,7 @@ iex (irm https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install.p
 
 ## Option 2: Manual Download
 
-Pick your platform binary below, plus ``golinx.example.toml`` and ``README.txt``.
+Pick your platform binary below, plus ``golinx.example.toml``.
 
 | File | Description |
 |------|-------------|
@@ -129,7 +113,6 @@ Pick your platform binary below, plus ``golinx.example.toml`` and ``README.txt``
 | ``golinx-linux-arm64`` | Linux ARM64 / Raspberry Pi |
 | ``golinx-darwin-arm64`` | macOS Apple Silicon |
 | ``golinx.example.toml`` | Example configuration file |
-| ``README.txt`` | Quick-start guide |
 "@
 gh release create $Tag --title "GoLinx $Tag" --generate-notes --notes $notes
 if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }

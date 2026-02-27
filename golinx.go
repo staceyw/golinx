@@ -71,6 +71,7 @@ var (
 	importFile      = flag.String("import", "", "import linx from JSON file (skips existing)")
 	resolveFile     = flag.String("resolve", "", "resolve a link from JSON backup file and exit")
 	maxResolveDepth = flag.Int("max-resolve-depth", 5, "maximum link chain resolution depth")
+	userPermsFlag   = flag.String("user-perms", "", `LAN user permissions: comma-separated list of "add","update","delete", or "*" for all, "" for read-only (default "*")`)
 )
 
 func init() {
@@ -83,20 +84,22 @@ Usage:
   golinx                                               (loads golinx.toml)
 
 Listener URIs (--listen, repeatable):
-  --listen "http://:8080"                              Plain HTTP
+  --listen "http://:80"                                Plain HTTP
   --listen "https://:443;cert=c.pem;key=k.pem"        HTTPS with own certs
   --listen "ts+https://:443"                           Tailscale HTTPS (requires --ts-hostname)
-  --listen "ts+http://:8080"                           Tailscale plain HTTP
+  --listen "ts+http://:80"                             Tailscale plain HTTP
 
 Flags:
-  --verbose          Verbose tsnet logging (default: false)
-  --ts-hostname NAME Tailscale node hostname (required for ts+* listeners)
-  --ts-dir PATH      Tailscale state directory
-                     (default: ~/.config/tsnet-golinx on Linux,
-                      %%APPDATA%%\tsnet-golinx on Windows)
-  --import FILE  Import linx from JSON file (skips existing)
-  --resolve FILE Resolve a link from JSON backup and exit
-                 Usage: golinx --resolve links.json shortname/path
+  --verbose            Verbose tsnet logging (default: false)
+  --ts-hostname NAME   Tailscale node hostname (default: go)
+  --ts-dir PATH        Tailscale state directory
+                       (default: ~/.config/tsnet-golinx on Linux,
+                        %%APPDATA%%\tsnet-golinx on Windows)
+  --user-perms PERMS   LAN user permissions: comma-separated list of
+                       add,update,delete or * for all (default: *)
+  --import FILE        Import linx from JSON file (skips existing)
+  --resolve FILE       Resolve a link from JSON backup and exit
+                       Usage: golinx --resolve links.json shortname/path
   --max-resolve-depth N  Max link chain depth (default: 5)
 
 Config:
@@ -612,10 +615,21 @@ func Run() error {
 	if !cliSet["max-resolve-depth"] && hasConfig && cfg.MaxResolveDepth > 0 {
 		*maxResolveDepth = cfg.MaxResolveDepth
 	}
-	if hasConfig {
-		if cfg.UserPerms != nil {
-			userPerms = cfg.UserPerms
+	if cliSet["user-perms"] {
+		// CLI flag: parse comma-separated list (empty string = read-only)
+		if *userPermsFlag == "" {
+			userPerms = []string{}
+		} else {
+			parts := strings.Split(*userPermsFlag, ",")
+			userPerms = make([]string, 0, len(parts))
+			for _, p := range parts {
+				if s := strings.TrimSpace(p); s != "" {
+					userPerms = append(userPerms, s)
+				}
+			}
 		}
+	} else if hasConfig && cfg.UserPerms != nil {
+		userPerms = cfg.UserPerms
 	}
 
 	// Handle --import: open DB, import, exit.

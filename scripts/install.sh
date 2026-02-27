@@ -39,7 +39,6 @@ echo ""
 echo "This will download into ${INSTALL_DIR}/:"
 echo "  - golinx              (binary)"
 echo "  - golinx.example.toml (example config)"
-echo "  - README.txt          (quick-start guide)"
 echo ""
 
 # Check for curl or wget
@@ -80,9 +79,22 @@ download() {
 echo ""
 download "${BASE_URL}/${BINARY}" "${INSTALL_DIR}/golinx"
 download "${BASE_URL}/golinx.example.toml" "${INSTALL_DIR}/golinx.example.toml"
-download "${BASE_URL}/README.txt" "${INSTALL_DIR}/README.txt"
 
 chmod +x "${INSTALL_DIR}/golinx"
+
+# Generate local readme
+cat > "${INSTALL_DIR}/readme.txt" << 'EOF'
+GoLinx - URL shortener and people directory
+
+Quick Start:
+  1. Run:  ./golinx --listen "http://:80"
+  2. Click the URL in the terminal or open http://localhost in your browser.
+
+For persistent config, copy golinx.example.toml to golinx.toml and run ./golinx with no flags.
+
+Project page:    https://staceyw.github.io/GoLinx
+Documentation:   https://github.com/staceyw/GoLinx#documentation
+EOF
 
 # --- Done ------------------------------------------------------------------
 

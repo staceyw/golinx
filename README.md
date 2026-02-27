@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install
 iex (irm https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install.ps1)
 ```
 
-Downloads the binary, example config, and quick-start README into the current directory.
+Downloads the binary and example config into the current directory.
 
 ## Quick Start
 
@@ -34,7 +34,7 @@ go build -o golinx . && ./golinx --listen "http://:80"
 
 Open `http://localhost` — done. For persistent configuration, copy `golinx.example.toml` to `golinx.toml` and run `./golinx` with no flags.
 
-> Port 80 is required for `go/link` to work in the browser — see [Making `go/link` Work](docs/admin-guide.md#making-golink-work) in the admin guide. On Linux, use `sudo` if port 80 is restricted.
+> Port 80 is required for `go/link` to work in the browser. On Linux, use `sudo` if port 80 is restricted. For Tailscale, add both listeners so the FQDN works too: `--listen "ts+https://:443" --listen "ts+http://:80"`. See [Making `go/link` Work](docs/admin-guide.md#making-golink-work) for the full explanation of HTTP vs HTTPS and bare hostnames vs FQDNs.
 
 ## Highlights
 
