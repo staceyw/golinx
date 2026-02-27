@@ -350,14 +350,100 @@ func TestDB_Delete(t *testing.T) {
 	if err := db.Delete(id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	_, err := db.LoadByID(id)
+	// LoadByID still finds it (soft-deleted).
+	lnx, err := db.LoadByID(id)
+	if err != nil {
+		t.Fatalf("LoadByID after soft delete: %v", err)
+	}
+	if lnx.DeletedAt == 0 {
+		t.Error("expected DeletedAt > 0 after soft delete")
+	}
+	// LoadByShortName should NOT find it.
+	_, err = db.LoadByShortName("del1")
 	if err != fs.ErrNotExist {
-		t.Errorf("LoadByID after delete = %v, want fs.ErrNotExist", err)
+		t.Errorf("LoadByShortName after delete = %v, want fs.ErrNotExist", err)
 	}
 
 	// Double delete
 	if err := db.Delete(id); err != fs.ErrNotExist {
 		t.Errorf("double Delete = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestDB_Restore(t *testing.T) {
+	resetDB(t)
+
+	id, _ := db.Save(&Linx{Type: LinxTypeLink, ShortName: "rest1", DestinationURL: "https://example.com", Owner: "test@example.com"})
+	db.Delete(id)
+
+	if err := db.Restore(id); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	lnx, _ := db.LoadByID(id)
+	if lnx.DeletedAt != 0 {
+		t.Error("expected DeletedAt = 0 after restore")
+	}
+	if _, err := db.LoadByShortName("rest1"); err != nil {
+		t.Errorf("LoadByShortName after restore: %v", err)
+	}
+	// Restore non-deleted should fail.
+	if err := db.Restore(id); err != fs.ErrNotExist {
+		t.Errorf("Restore active item = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestDB_LoadDeleted(t *testing.T) {
+	resetDB(t)
+	seedTestData(t)
+
+	deleted, _ := db.LoadDeleted()
+	if len(deleted) != 0 {
+		t.Errorf("LoadDeleted before any delete = %d, want 0", len(deleted))
+	}
+
+	lnx, _ := db.LoadByShortName("github")
+	db.Delete(lnx.ID)
+	deleted, _ = db.LoadDeleted()
+	if len(deleted) != 1 || deleted[0].ShortName != "github" {
+		t.Errorf("LoadDeleted = %d, want 1 (github)", len(deleted))
+	}
+}
+
+func TestDB_PurgeDeleted(t *testing.T) {
+	resetDB(t)
+
+	id, _ := db.Save(&Linx{Type: LinxTypeLink, ShortName: "purge1", DestinationURL: "https://example.com", Owner: "test@example.com"})
+	db.Delete(id)
+
+	n, err := db.PurgeDeleted(time.Now().Add(time.Hour).Unix())
+	if err != nil {
+		t.Fatalf("PurgeDeleted: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("purged %d, want 1", n)
+	}
+	_, err = db.LoadByID(id)
+	if err != fs.ErrNotExist {
+		t.Errorf("LoadByID after purge = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestDB_SaveReusesDeletedShortName(t *testing.T) {
+	resetDB(t)
+
+	id1, _ := db.Save(&Linx{Type: LinxTypeLink, ShortName: "reuse", DestinationURL: "https://old.com", Owner: "test@example.com"})
+	db.Delete(id1)
+
+	id2, err := db.Save(&Linx{Type: LinxTypeLink, ShortName: "reuse", DestinationURL: "https://new.com", Owner: "test@example.com"})
+	if err != nil {
+		t.Fatalf("Save reuse: %v", err)
+	}
+	if id2 == id1 {
+		t.Error("expected new ID, got same as deleted item")
+	}
+	lnx, _ := db.LoadByShortName("reuse")
+	if lnx.DestinationURL != "https://new.com" {
+		t.Errorf("destination = %s, want https://new.com", lnx.DestinationURL)
 	}
 }
 
@@ -1966,5 +2052,79 @@ func TestAPISuggest(t *testing.T) {
 	}
 	if !strings.Contains(descs[0], "John") {
 		t.Fatalf("person description = %q, want to contain 'John'", descs[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Soft Delete / Restore
+// ---------------------------------------------------------------------------
+
+func TestDB_LoadAll_ExcludesDeleted(t *testing.T) {
+	resetDB(t)
+	seedTestData(t)
+
+	all, _ := db.LoadAll("")
+	count := len(all)
+
+	lnx, _ := db.LoadByShortName("github")
+	db.Delete(lnx.ID)
+
+	all, _ = db.LoadAll("")
+	if len(all) != count-1 {
+		t.Errorf("LoadAll after delete = %d, want %d", len(all), count-1)
+	}
+}
+
+func TestAPI_LinxRestore(t *testing.T) {
+	mux := serveHandler()
+
+	t.Run("valid restore", func(t *testing.T) {
+		resetDB(t)
+		ids := seedTestData(t)
+		id := ids["google"]
+		db.Delete(id)
+		w := doRequest(t, mux, "POST", fmt.Sprintf("/api/linx/%d/restore", id))
+		if w.Code != 200 {
+			t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("restore non-deleted", func(t *testing.T) {
+		resetDB(t)
+		ids := seedTestData(t)
+		id := ids["google"]
+		w := doRequest(t, mux, "POST", fmt.Sprintf("/api/linx/%d/restore", id))
+		if w.Code != 400 {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		resetDB(t)
+		w := doRequest(t, mux, "POST", "/api/linx/999999/restore")
+		if w.Code != 404 {
+			t.Errorf("status = %d, want 404", w.Code)
+		}
+	})
+}
+
+func TestDeletedPage(t *testing.T) {
+	resetDB(t)
+	seedTestData(t)
+	mux := serveHandler()
+
+	lnx, _ := db.LoadByShortName("github")
+	db.Delete(lnx.ID)
+
+	w := doRequest(t, mux, "GET", "/.deleted")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "github") {
+		t.Error("deleted page should contain 'github'")
+	}
+	if !strings.Contains(body, "Undelete") {
+		t.Error("deleted page should contain 'Undelete' button")
 	}
 }

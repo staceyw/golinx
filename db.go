@@ -43,6 +43,7 @@ type Linx struct {
 	Color          string `json:"color"`
 	Tags           string `json:"tags"`
 	DateCreated    int64  `json:"dateCreated"`
+	DeletedAt      int64  `json:"deletedAt,omitempty"`
 }
 
 // IsPersonType returns true for linx types that use the person form and profile page.
@@ -50,14 +51,14 @@ func (c *Linx) IsPersonType() bool {
 	return c.Type == LinxTypeEmployee || c.Type == LinxTypeCustomer || c.Type == LinxTypeVendor
 }
 
-const linxColumns = `ID, Type, ShortName, DestinationURL, Description, Owner, LastClicked, ClickCount, FirstName, LastName, Title, Email, Phone, WebLink, CalLink, XLink, LinkedInLink, AvatarMime, Color, Tags, DateCreated`
+const linxColumns = `ID, Type, ShortName, DestinationURL, Description, Owner, LastClicked, ClickCount, FirstName, LastName, Title, Email, Phone, WebLink, CalLink, XLink, LinkedInLink, AvatarMime, Color, Tags, DateCreated, DeletedAt`
 
 func scanLinx(scanner interface{ Scan(dest ...any) error }) (*Linx, error) {
 	c := new(Linx)
 	err := scanner.Scan(&c.ID, &c.Type, &c.ShortName, &c.DestinationURL,
 		&c.Description, &c.Owner, &c.LastClicked, &c.ClickCount,
 		&c.FirstName, &c.LastName, &c.Title, &c.Email, &c.Phone,
-		&c.WebLink, &c.CalLink, &c.XLink, &c.LinkedInLink, &c.AvatarMime, &c.Color, &c.Tags, &c.DateCreated)
+		&c.WebLink, &c.CalLink, &c.XLink, &c.LinkedInLink, &c.AvatarMime, &c.Color, &c.Tags, &c.DateCreated, &c.DeletedAt)
 	return c, err
 }
 
@@ -99,6 +100,7 @@ func NewSQLiteDB(f string) (*SQLiteDB, error) {
 	for _, col := range []string{
 		"ALTER TABLE Linx ADD COLUMN Color TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE Linx ADD COLUMN Tags TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE Linx ADD COLUMN DeletedAt INTEGER NOT NULL DEFAULT 0",
 	} {
 		db.Exec(col) // ignore "duplicate column" errors
 	}
@@ -110,10 +112,10 @@ func (s *SQLiteDB) LoadAll(filterType string) ([]*Linx, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := "SELECT " + linxColumns + " FROM Linx"
+	query := "SELECT " + linxColumns + " FROM Linx WHERE DeletedAt = 0"
 	var args []any
 	if filterType != "" {
-		query += " WHERE Type = ?"
+		query += " AND Type = ?"
 		args = append(args, filterType)
 	}
 	query += " ORDER BY LOWER(ShortName)"
@@ -155,7 +157,7 @@ func (s *SQLiteDB) LoadByShortName(name string) (*Linx, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	c, err := scanLinx(s.db.QueryRow("SELECT "+linxColumns+" FROM Linx WHERE LOWER(ShortName) = LOWER(?)", name))
+	c, err := scanLinx(s.db.QueryRow("SELECT "+linxColumns+" FROM Linx WHERE LOWER(ShortName) = LOWER(?) AND DeletedAt = 0", name))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fs.ErrNotExist
@@ -176,6 +178,8 @@ func (s *SQLiteDB) insertLinx(lnx *Linx) (int64, error) {
 	if lnx.Type == "" {
 		lnx.Type = LinxTypeLink
 	}
+	// Free up the short name if occupied by a soft-deleted item.
+	s.db.Exec("DELETE FROM Linx WHERE LOWER(ShortName) = LOWER(?) AND DeletedAt > 0", lnx.ShortName)
 	now := time.Now().Unix()
 	result, err := s.db.Exec(
 		`INSERT INTO Linx (Type, ShortName, DestinationURL, Description, Owner, FirstName, LastName, Title, Email, Phone, WebLink, CalLink, XLink, LinkedInLink, Color, Tags, DateCreated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -213,12 +217,13 @@ func (s *SQLiteDB) Update(lnx *Linx) error {
 	return nil
 }
 
-// Delete removes a linx by ID.
+// Delete soft-deletes a linx by setting its DeletedAt timestamp.
 func (s *SQLiteDB) Delete(id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec("DELETE FROM Linx WHERE ID = ?", id)
+	now := time.Now().Unix()
+	result, err := s.db.Exec("UPDATE Linx SET DeletedAt = ? WHERE ID = ? AND DeletedAt = 0", now, id)
 	if err != nil {
 		return err
 	}
@@ -232,18 +237,71 @@ func (s *SQLiteDB) Delete(id int64) error {
 	return nil
 }
 
+// Restore un-deletes a soft-deleted linx by clearing its DeletedAt timestamp.
+func (s *SQLiteDB) Restore(id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec("UPDATE Linx SET DeletedAt = 0 WHERE ID = ? AND DeletedAt > 0", id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fs.ErrNotExist
+	}
+	return nil
+}
+
+// LoadDeleted returns all soft-deleted linx, ordered by deletion time (most recent first).
+func (s *SQLiteDB) LoadDeleted() ([]*Linx, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT " + linxColumns + " FROM Linx WHERE DeletedAt > 0 ORDER BY DeletedAt DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []*Linx
+	for rows.Next() {
+		c, err := scanLinx(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, c)
+	}
+	return items, rows.Err()
+}
+
+// PurgeDeleted permanently removes soft-deleted linx older than the cutoff timestamp.
+func (s *SQLiteDB) PurgeDeleted(cutoff int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec("DELETE FROM Linx WHERE DeletedAt > 0 AND DeletedAt < ?", cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // IncrementClick atomically increments click count, updates LastClicked, and logs the click.
 func (s *SQLiteDB) IncrementClick(shortName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now().Unix()
-	_, err := s.db.Exec("UPDATE Linx SET ClickCount = ClickCount + 1, LastClicked = ? WHERE LOWER(ShortName) = LOWER(?)", now, shortName)
+	_, err := s.db.Exec("UPDATE Linx SET ClickCount = ClickCount + 1, LastClicked = ? WHERE LOWER(ShortName) = LOWER(?) AND DeletedAt = 0", now, shortName)
 	if err != nil {
 		return err
 	}
 	// Best-effort click log for analytics.
-	s.db.Exec("INSERT INTO ClickLog (LinxID, ClickedAt) SELECT ID, ? FROM Linx WHERE LOWER(ShortName) = LOWER(?)", now, shortName)
+	s.db.Exec("INSERT INTO ClickLog (LinxID, ClickedAt) SELECT ID, ? FROM Linx WHERE LOWER(ShortName) = LOWER(?) AND DeletedAt = 0", now, shortName)
 	return nil
 }
 
@@ -272,7 +330,7 @@ func (s *SQLiteDB) StatsTopLinks(limit int) ([]TopLink, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query("SELECT ShortName, ClickCount FROM Linx WHERE Type = 'link' AND ClickCount > 0 ORDER BY ClickCount DESC LIMIT ?", limit)
+	rows, err := s.db.Query("SELECT ShortName, ClickCount FROM Linx WHERE Type = 'link' AND ClickCount > 0 AND DeletedAt = 0 ORDER BY ClickCount DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +401,7 @@ func (s *SQLiteDB) GetStatsSummary() (*StatsSummary, error) {
 	weekAgo := time.Now().AddDate(0, 0, -7).Unix()
 	var sum StatsSummary
 	var topLink sql.NullString
-	err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM Linx), (SELECT COALESCE(SUM(ClickCount), 0) FROM Linx), (SELECT COUNT(*) FROM Linx WHERE DateCreated >= ?), (SELECT ShortName FROM Linx WHERE ClickCount > 0 ORDER BY ClickCount DESC LIMIT 1)`, weekAgo).Scan(&sum.TotalLinks, &sum.TotalClicks, &sum.CreatedThisWeek, &topLink)
+	err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM Linx WHERE DeletedAt = 0), (SELECT COALESCE(SUM(ClickCount), 0) FROM Linx WHERE DeletedAt = 0), (SELECT COUNT(*) FROM Linx WHERE DeletedAt = 0 AND DateCreated >= ?), (SELECT ShortName FROM Linx WHERE DeletedAt = 0 AND ClickCount > 0 ORDER BY ClickCount DESC LIMIT 1)`, weekAgo).Scan(&sum.TotalLinks, &sum.TotalClicks, &sum.CreatedThisWeek, &topLink)
 	if err != nil {
 		return nil, err
 	}
@@ -378,10 +436,10 @@ func (s *SQLiteDB) LinxCount(filterType string) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := "SELECT COUNT(*) FROM Linx"
+	query := "SELECT COUNT(*) FROM Linx WHERE DeletedAt = 0"
 	var args []any
 	if filterType != "" {
-		query += " WHERE Type = ?"
+		query += " AND Type = ?"
 		args = append(args, filterType)
 	}
 	var count int
@@ -397,7 +455,7 @@ func (s *SQLiteDB) Suggest(query string, limit int) ([]*Linx, error) {
 
 	like := "%" + query + "%"
 	rows, err := s.db.Query(
-		"SELECT "+linxColumns+" FROM Linx WHERE LOWER(ShortName) LIKE LOWER(?) OR LOWER(Description) LIKE LOWER(?) ORDER BY ClickCount DESC LIMIT ?",
+		"SELECT "+linxColumns+" FROM Linx WHERE DeletedAt = 0 AND (LOWER(ShortName) LIKE LOWER(?) OR LOWER(Description) LIKE LOWER(?)) ORDER BY ClickCount DESC LIMIT ?",
 		like, like, limit,
 	)
 	if err != nil {

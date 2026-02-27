@@ -33,6 +33,9 @@ verbose = false
 # Admin users — configured via Tailscale ACL grants (not in this file).
 # See docs/tailscale-grants.md for setup instructions.
 
+# Days to keep deleted items before permanent purge (default: 30, 0 = keep forever).
+# delete-retention = 30
+
 # Permissions for non-localhost local users (default: ["*"] = full access).
 # Controls what LAN users can do when accessing via the local HTTP listener.
 # Localhost (127.0.0.1/::1) always has full admin access regardless of this setting.

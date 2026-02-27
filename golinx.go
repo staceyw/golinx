@@ -72,6 +72,7 @@ var (
 	resolveFile     = flag.String("resolve", "", "resolve a link from JSON backup file and exit")
 	maxResolveDepth = flag.Int("max-resolve-depth", 5, "maximum link chain resolution depth")
 	userPermsFlag   = flag.String("user-perms", "", `LAN user permissions: comma-separated list of "add","update","delete", or "*" for all, "" for read-only (default "*")`)
+	deleteRetention = flag.Int("delete-retention", 30, "days to keep deleted items before purge (0 = keep forever)")
 )
 
 func init() {
@@ -101,6 +102,8 @@ Flags:
   --resolve FILE       Resolve a link from JSON backup and exit
                        Usage: golinx --resolve links.json shortname/path
   --max-resolve-depth N  Max link chain depth (default: 5)
+  --delete-retention N   Days to keep deleted items before purge
+                         (default: 30, 0 = keep forever)
 
 Config:
   Place a golinx.toml in the working directory. See golinx.example.toml.
@@ -432,6 +435,7 @@ type config struct {
 	TailscaleDir    string   `toml:"ts-dir"`
 	MaxResolveDepth int      `toml:"max-resolve-depth"`
 	UserPerms       []string `toml:"user-perms"`
+	DeleteRetention *int     `toml:"delete-retention"`
 }
 
 var userPerms = []string{"*"} // default: full access for local users
@@ -615,6 +619,9 @@ func Run() error {
 	if !cliSet["max-resolve-depth"] && hasConfig && cfg.MaxResolveDepth > 0 {
 		*maxResolveDepth = cfg.MaxResolveDepth
 	}
+	if !cliSet["delete-retention"] && hasConfig && cfg.DeleteRetention != nil {
+		*deleteRetention = *cfg.DeleteRetention
+	}
 	if cliSet["user-perms"] {
 		// CLI flag: parse comma-separated list (empty string = read-only)
 		if *userPermsFlag == "" {
@@ -666,6 +673,11 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("NewSQLiteDB: %w", err)
 	}
+
+	// Start background purge of expired soft-deleted items.
+	purgeCtx, purgeCancel := context.WithCancel(context.Background())
+	defer purgeCancel()
+	go startPurgeLoop(purgeCtx, *deleteRetention)
 
 	// Silence default logger so tsnet noise is suppressed in non-verbose mode.
 	if !*verbose {
@@ -914,6 +926,35 @@ func localHTTPSRedirectHandler(tlsAddr string) http.Handler {
 	})
 }
 
+// startPurgeLoop runs an initial purge and then repeats every hour.
+func startPurgeLoop(ctx context.Context, retentionDays int) {
+	if retentionDays <= 0 {
+		return
+	}
+	purge := func() {
+		cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).Unix()
+		n, err := db.PurgeDeleted(cutoff)
+		if err != nil {
+			logger.Error("purge deleted items", "err", err)
+			return
+		}
+		if n > 0 {
+			logger.Warn("purged expired deleted items", "count", n)
+		}
+	}
+	purge()
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			purge()
+		}
+	}
+}
+
 // awaitShutdown waits for SIGINT or a fatal listener error, then gracefully
 // shuts down all servers.
 func awaitShutdown(errCh <-chan error, servers []*http.Server, tsSrv *tsnet.Server) error {
@@ -976,6 +1017,7 @@ func serveHandler() http.Handler {
 	mux.HandleFunc("POST /api/linx", apiLinxCreate)
 	mux.HandleFunc("PUT /api/linx/{id}", apiLinxUpdate)
 	mux.HandleFunc("DELETE /api/linx/{id}", apiLinxDelete)
+	mux.HandleFunc("POST /api/linx/{id}/restore", apiLinxRestore)
 	mux.HandleFunc("POST /api/linx/{id}/avatar", apiLinxAvatarUpload)
 	mux.HandleFunc("GET /api/linx/{id}/avatar", apiLinxAvatarGet)
 	mux.HandleFunc("GET /api/settings", apiSettingsGet)
@@ -991,6 +1033,7 @@ func serveHandler() http.Handler {
 	mux.HandleFunc("GET /.addlinx", serveAddLink)
 	mux.HandleFunc("GET /.help", serveHelp)
 	mux.HandleFunc("GET /.export", serveExport)
+	mux.HandleFunc("GET /.deleted", serveDeleted)
 	mux.HandleFunc("GET /.ping/{host}", servePing)
 	mux.HandleFunc("GET /.whoami", serveWhoAmI)
 	mux.HandleFunc("GET /{path...}", serveRedirect)
@@ -1292,6 +1335,45 @@ func apiLinxDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		serverError(w, "failed to delete linx", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func apiLinxRestore(w http.ResponseWriter, r *http.Request) {
+	if isLocalUser(r) && !hasUserPerm("delete") {
+		http.Error(w, "permission denied", http.StatusForbidden)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	existing, err := db.LoadByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if existing.DeletedAt == 0 {
+		http.Error(w, "item is not deleted", http.StatusBadRequest)
+		return
+	}
+	if !canEdit(r, existing.Owner) {
+		http.Error(w, "permission denied", http.StatusForbidden)
+		return
+	}
+	// Check if the short name is now occupied by an active item.
+	if conflict, err := db.LoadByShortName(existing.ShortName); err == nil && conflict.ID != existing.ID {
+		http.Error(w, "short name is already in use", http.StatusConflict)
+		return
+	}
+	if err := db.Restore(id); err != nil {
+		if err == fs.ErrNotExist {
+			http.Error(w, "item not found or not deleted", http.StatusNotFound)
+			return
+		}
+		serverError(w, "failed to restore linx", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -2027,6 +2109,243 @@ func serveHelp(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, helpPageRendered)
 }
+
+// ---------------------------------------------------------------------------
+// Deleted Items Page
+// ---------------------------------------------------------------------------
+
+type deletedPageData struct {
+	Items         []*deletedItem
+	RetentionDays int
+	KeepForever   bool
+}
+
+type deletedItem struct {
+	*Linx
+	DeletedFormatted string
+	ExpiresFormatted string
+}
+
+var deletedPageTmpl = template.Must(template.New("deleted").Parse(deletedPageTemplate))
+
+func serveDeleted(w http.ResponseWriter, r *http.Request) {
+	items, err := db.LoadDeleted()
+	if err != nil {
+		serverError(w, "failed to load deleted items", err)
+		return
+	}
+	keepForever := *deleteRetention <= 0
+	data := deletedPageData{
+		RetentionDays: *deleteRetention,
+		KeepForever:   keepForever,
+	}
+	for _, lnx := range items {
+		di := &deletedItem{
+			Linx:             lnx,
+			DeletedFormatted: time.Unix(lnx.DeletedAt, 0).UTC().Format("Jan 2, 2006 15:04"),
+		}
+		if !keepForever {
+			expires := time.Unix(lnx.DeletedAt, 0).Add(time.Duration(*deleteRetention) * 24 * time.Hour)
+			di.ExpiresFormatted = expires.UTC().Format("Jan 2, 2006 15:04")
+		}
+		data.Items = append(data.Items, di)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	deletedPageTmpl.Execute(w, data)
+}
+
+const deletedPageTemplate = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deleted Items - GoLinx</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+:root {
+  --bar-bg: #1e1e2e;
+  --bar-border: #313244;
+  --bar-text: #cdd6f4;
+  --btn-bg: #89b4fa;
+  --btn-text: #1e1e2e;
+  --btn-hover: #74c7ec;
+  --panel-bg: #1e1e2e;
+  --panel-border: #313244;
+  --panel-text: #cdd6f4;
+  --panel-heading: #89b4fa;
+  --panel-path-text: #a6adc8;
+  --panel-btn-bg: #45475a;
+  --panel-btn-text: #cdd6f4;
+  --panel-btn-hover: #585b70;
+  --body-bg: #11111b;
+  --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; padding: 24px;
+  font-family: var(--font);
+  background: var(--body-bg);
+  color: var(--panel-text);
+  min-height: 100vh;
+}
+a { color: var(--btn-bg); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.back-link {
+  display: inline-block;
+  margin-bottom: 16px;
+  color: var(--panel-path-text);
+  font-size: 14px;
+}
+.deleted-page {
+  max-width: 900px;
+  margin: 0 auto;
+}
+h1 {
+  color: var(--panel-heading);
+  font-size: 22px;
+  margin: 0 0 8px 0;
+}
+.retention-note {
+  color: var(--panel-path-text);
+  font-size: 13px;
+  margin: 0 0 20px 0;
+}
+.empty-note {
+  color: var(--panel-path-text);
+  font-size: 14px;
+  text-align: center;
+  padding: 40px 0;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--panel-path-text);
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--bar-bg);
+}
+td {
+  padding: 10px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--panel-border);
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+td code {
+  color: var(--panel-heading);
+  font-size: 13px;
+}
+.type-cell { text-transform: capitalize; }
+.dest-cell {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--panel-path-text);
+}
+.date-cell {
+  white-space: nowrap;
+  color: var(--panel-path-text);
+  font-size: 12px;
+}
+.restore-btn {
+  padding: 5px 14px;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.restore-btn:hover { background: var(--btn-hover); }
+.toast {
+  position: fixed; bottom: 24px; left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 24px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  color: var(--panel-text);
+  border-radius: 6px;
+  font-size: 13px;
+  opacity: 0; transition: opacity 0.3s;
+  z-index: 999;
+}
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">&#8592; GoLinx</a>
+<div class="deleted-page">
+<h1>Deleted Items</h1>
+{{if .KeepForever}}<p class="retention-note">Deleted items are kept until manually purged.</p>
+{{else}}<p class="retention-note">Deleted items are permanently removed after {{.RetentionDays}} days.</p>
+{{end}}
+{{if .Items}}<table>
+<thead>
+<tr><th>Short Name</th><th>Type</th><th>Destination / Name</th><th>Deleted</th>{{if not .KeepForever}}<th>Expires</th>{{end}}<th></th></tr>
+</thead>
+<tbody>
+{{range .Items}}<tr id="row-{{.ID}}">
+  <td><code>{{.ShortName}}</code></td>
+  <td class="type-cell">{{.Type}}</td>
+  <td class="dest-cell">{{if .IsPersonType}}{{.FirstName}} {{.LastName}}{{else}}{{.DestinationURL}}{{end}}</td>
+  <td class="date-cell">{{.DeletedFormatted}}</td>
+  {{if not $.KeepForever}}<td class="date-cell">{{.ExpiresFormatted}}</td>{{end}}
+  <td><button class="restore-btn" onclick="restoreItem({{.ID}})">Undelete</button></td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else}}<p class="empty-note">No deleted items.</p>
+{{end}}
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function restoreItem(id) {
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '...';
+  fetch('/api/linx/' + id + '/restore', { method: 'POST' })
+    .then(function(r) {
+      if (r.ok) {
+        var row = document.getElementById('row-' + id);
+        row.style.opacity = '0';
+        row.style.transition = 'opacity 0.3s';
+        setTimeout(function() {
+          row.remove();
+          if (!document.querySelector('tbody tr')) location.reload();
+        }, 300);
+        showToast('Restored');
+      } else {
+        r.text().then(function(msg) {
+          showToast('Error: ' + msg);
+          btn.disabled = false;
+          btn.textContent = 'Undelete';
+        });
+      }
+    });
+}
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function() { t.classList.remove('show'); }, 2500);
+}
+</script>
+</body>
+</html>`
 
 // ---------------------------------------------------------------------------
 // TCP Ping
