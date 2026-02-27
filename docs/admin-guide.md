@@ -49,7 +49,7 @@ To create a dedicated LXC container with GoLinx on a Proxmox host:
 curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-lxc.sh | bash
 ```
 
-The script creates a Debian 12 container, downloads GoLinx, and starts it as a systemd service. It prompts for container ID, resources, network, and listener configuration.
+The script creates a Debian 12 container, downloads GoLinx, and starts it as a systemd service. It prompts for container ID, hostname, root password, resources, network, and listener configuration. When an HTTPS listener is chosen, the script offers to add a companion HTTP listener so bare-hostname access (`go/link`) works too.
 
 After install, manage the container from the Proxmox host:
 
