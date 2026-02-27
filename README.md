@@ -18,7 +18,13 @@ curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install
 iex (irm https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install.ps1)
 ```
 
-Downloads the binary and example config into the current directory.
+**Proxmox LXC:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-lxc.sh | bash
+```
+
+Downloads the binary and example config into the current directory (script installers). The LXC script creates a Debian 12 container with GoLinx running as a service.
 
 ## Quick Start
 
@@ -39,6 +45,8 @@ Open `http://localhost` — done. For persistent configuration, copy `golinx.exa
 ## Highlights
 
 - **Links + People** — short links, employees, customers, and vendors in one unified grid
+- **Click analytics** — charts dashboard with top links, daily click histogram, and summary stats
+- **Short code generator** — one-click random short codes for bit.ly-style links
 - **Fuzzy search** with type prefix filters (`:e`, `:c`, `:v`, `:l`) and tag search (`:t`)
 - **12 themes** — Catppuccin Mocha, Dracula, Nord, Solarized, Gruvbox, and more
 - **Profile pages** with avatar, contact info, and social links

@@ -15,8 +15,11 @@ Everything in GoLinx is a **Linx**. The linx type determines its behavior:
 
 - **+** button — creates a new Link (short name + destination URL)
 - **Person icon** button — creates a new person linx (Employee, Customer, or Vendor) with name, title, email, phone, and social links
+- **Generate** button — generates a random 6-character short code (bit.ly-style) for quick, shareable links
 
 Short names must start with a letter, digit, or underscore, followed by letters, digits, dashes, underscores, or periods. They are unique and case-insensitive.
+
+The label above the Short Name field shows a live preview of the full URL as you type (e.g. `go/jira`). Click it to open the link in a new tab.
 
 ## Search
 
@@ -60,6 +63,19 @@ Focus is trapped inside open modals — Tab and Shift+Tab cycle through fields w
 - **A-Z** — alphabetical by short name (links) or first name (people)
 - **Popular** — by click count, descending
 - **Recent** — by last clicked (links) or date created (people)
+- **Charts** — switches to the analytics dashboard (see below)
+
+## Charts
+
+The **Charts** view replaces the grid with a click analytics dashboard:
+
+- **Summary cards** — total links, total clicks, top link, and links created this week
+- **Top Links** — horizontal bar chart of the most-clicked links
+- **Daily Clicks** — 30-day histogram showing click activity over time
+
+Individual link detail pages (`/{name}+`) also show a 30-day click histogram.
+
+Charts use the ClickLog, which records every redirect. New installations will show data as clicks accumulate.
 
 ## Views
 
@@ -122,4 +138,4 @@ Person linx support avatar images. Upload via the Edit modal — pick a file and
 
 ## Settings
 
-Theme, view mode, and sort mode are automatically saved and restored on your next visit.
+Theme, view mode, and sort mode (including Charts) are automatically saved and restored on your next visit.

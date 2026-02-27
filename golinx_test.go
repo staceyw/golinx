@@ -45,6 +45,9 @@ func resetDB(t *testing.T) {
 	if _, err := db.db.Exec("DELETE FROM Settings"); err != nil {
 		t.Fatalf("resetDB Settings: %v", err)
 	}
+	if _, err := db.db.Exec("DELETE FROM ClickLog"); err != nil {
+		t.Fatalf("resetDB ClickLog: %v", err)
+	}
 }
 
 func testLinx() []*Linx {

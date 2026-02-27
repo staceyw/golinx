@@ -41,6 +41,26 @@ sudo systemctl restart golinx      # restart
 
 To change settings, edit the config file shown at the end of the install, then `sudo systemctl restart golinx`.
 
+## Proxmox LXC
+
+To create a dedicated LXC container with GoLinx on a Proxmox host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-lxc.sh | bash
+```
+
+The script creates a Debian 12 container, downloads GoLinx, and starts it as a systemd service. It prompts for container ID, resources, network, and listener configuration.
+
+After install, manage the container from the Proxmox host:
+
+```bash
+pct enter <CTID>                                    # shell into container
+pct exec <CTID> -- systemctl status golinx          # check service
+pct exec <CTID> -- journalctl -u golinx -f          # view logs
+pct stop <CTID>                                     # stop container
+pct start <CTID>                                    # start container
+```
+
 ## Listener URIs
 
 Each `--listen` flag takes a self-describing URI. Combine multiple `--listen` flags to run listeners together.
@@ -271,6 +291,7 @@ PUT    /api/linx/{id}         Update linx
 DELETE /api/linx/{id}         Delete linx
 POST   /api/linx/{id}/avatar  Upload avatar
 GET    /api/linx/{id}/avatar  Serve avatar
+GET    /api/stats              Click analytics (top links, daily histogram, summary)
 GET    /api/settings           Get setting (?key=)
 PUT    /api/settings           Save setting
 GET    /api/whoami             Current user, hostname, and Tailscale mode

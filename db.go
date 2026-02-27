@@ -232,14 +232,123 @@ func (s *SQLiteDB) Delete(id int64) error {
 	return nil
 }
 
-// IncrementClick atomically increments click count and updates LastClicked.
+// IncrementClick atomically increments click count, updates LastClicked, and logs the click.
 func (s *SQLiteDB) IncrementClick(shortName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now().Unix()
 	_, err := s.db.Exec("UPDATE Linx SET ClickCount = ClickCount + 1, LastClicked = ? WHERE LOWER(ShortName) = LOWER(?)", now, shortName)
-	return err
+	if err != nil {
+		return err
+	}
+	// Best-effort click log for analytics.
+	s.db.Exec("INSERT INTO ClickLog (LinxID, ClickedAt) SELECT ID, ? FROM Linx WHERE LOWER(ShortName) = LOWER(?)", now, shortName)
+	return nil
+}
+
+// TopLink holds a short name and its click count for stats.
+type TopLink struct {
+	ShortName  string `json:"shortName"`
+	ClickCount int64  `json:"clickCount"`
+}
+
+// DailyCount holds a date string and click count for the daily histogram.
+type DailyCount struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+// StatsSummary holds aggregate statistics.
+type StatsSummary struct {
+	TotalLinks      int    `json:"totalLinks"`
+	TotalClicks     int64  `json:"totalClicks"`
+	CreatedThisWeek int    `json:"createdThisWeek"`
+	TopLink         string `json:"topLink"`
+}
+
+// StatsTopLinks returns the top N links by click count.
+func (s *SQLiteDB) StatsTopLinks(limit int) ([]TopLink, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query("SELECT ShortName, ClickCount FROM Linx WHERE Type = 'link' AND ClickCount > 0 ORDER BY ClickCount DESC LIMIT ?", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []TopLink
+	for rows.Next() {
+		var t TopLink
+		if err := rows.Scan(&t.ShortName, &t.ClickCount); err != nil {
+			return nil, err
+		}
+		items = append(items, t)
+	}
+	return items, rows.Err()
+}
+
+// StatsDailyClicks returns click counts grouped by day for the last N days.
+func (s *SQLiteDB) StatsDailyClicks(days int) ([]DailyCount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	since := time.Now().AddDate(0, 0, -days).Unix()
+	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', ClickedAt, 'unixepoch') AS day, COUNT(*) AS count FROM ClickLog WHERE ClickedAt >= ? GROUP BY day ORDER BY day`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []DailyCount
+	for rows.Next() {
+		var d DailyCount
+		if err := rows.Scan(&d.Date, &d.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, d)
+	}
+	return items, rows.Err()
+}
+
+// LinkDailyClicks returns click counts grouped by day for a specific link over the last N days.
+func (s *SQLiteDB) LinkDailyClicks(linxID int64, days int) ([]DailyCount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	since := time.Now().AddDate(0, 0, -days).Unix()
+	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', ClickedAt, 'unixepoch') AS day, COUNT(*) AS count FROM ClickLog WHERE LinxID = ? AND ClickedAt >= ? GROUP BY day ORDER BY day`, linxID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []DailyCount
+	for rows.Next() {
+		var d DailyCount
+		if err := rows.Scan(&d.Date, &d.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, d)
+	}
+	return items, rows.Err()
+}
+
+// GetStatsSummary returns aggregate statistics.
+func (s *SQLiteDB) GetStatsSummary() (*StatsSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	weekAgo := time.Now().AddDate(0, 0, -7).Unix()
+	var sum StatsSummary
+	var topLink sql.NullString
+	err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM Linx), (SELECT COALESCE(SUM(ClickCount), 0) FROM Linx), (SELECT COUNT(*) FROM Linx WHERE DateCreated >= ?), (SELECT ShortName FROM Linx WHERE ClickCount > 0 ORDER BY ClickCount DESC LIMIT 1)`, weekAgo).Scan(&sum.TotalLinks, &sum.TotalClicks, &sum.CreatedThisWeek, &topLink)
+	if err != nil {
+		return nil, err
+	}
+	sum.TopLink = topLink.String
+	return &sum, nil
 }
 
 // GetSetting retrieves a setting value.

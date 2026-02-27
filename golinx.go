@@ -981,6 +981,7 @@ func serveHandler() http.Handler {
 	mux.HandleFunc("GET /api/settings", apiSettingsGet)
 	mux.HandleFunc("PUT /api/settings", apiSettingsPut)
 	mux.HandleFunc("GET /api/whoami", apiWhoAmI)
+	mux.HandleFunc("GET /api/stats", apiStats)
 	mux.HandleFunc("GET /api/db", apiDBGet)
 	mux.HandleFunc("PUT /api/db", apiDBPut)
 	mux.HandleFunc("GET /favicon.svg", serveFavicon)
@@ -1350,7 +1351,36 @@ func apiWhoAmI(w http.ResponseWriter, r *http.Request) {
 	if isLocalUser(r) {
 		perms = userPerms
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"login": login, "hostname": host, "tsMode": localClient != nil, "isAdmin": admin || localhost, "localhostAdmin": localhost, "perms": perms})
+	writeJSON(w, http.StatusOK, map[string]any{"login": login, "hostname": host, "tsMode": localClient != nil, "tsHostname": *tsHostname, "isAdmin": admin || localhost, "localhostAdmin": localhost, "perms": perms})
+}
+
+func apiStats(w http.ResponseWriter, r *http.Request) {
+	topLinks, err := db.StatsTopLinks(10)
+	if err != nil {
+		serverError(w, "failed to load top links", err)
+		return
+	}
+	dailyClicks, err := db.StatsDailyClicks(30)
+	if err != nil {
+		serverError(w, "failed to load daily clicks", err)
+		return
+	}
+	summary, err := db.GetStatsSummary()
+	if err != nil {
+		serverError(w, "failed to load stats summary", err)
+		return
+	}
+	if topLinks == nil {
+		topLinks = []TopLink{}
+	}
+	if dailyClicks == nil {
+		dailyClicks = []DailyCount{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"topLinks":    topLinks,
+		"dailyClicks": dailyClicks,
+		"summary":     summary,
+	})
 }
 
 func apiLinxAvatarUpload(w http.ResponseWriter, r *http.Request) {
@@ -1764,9 +1794,20 @@ body { display: flex; flex-direction: column; align-items: center; padding: 40px
 </body>
 </html>`
 
+type linkDetailBar struct {
+	Date   string
+	Count  int
+	Height int
+}
+
 type linkDetailData struct {
 	*Linx
 	CreatedFormatted string
+	DailyBars        []linkDetailBar
+	HasClicks        bool
+	DateStart        string
+	DateMid          string
+	DateEnd          string
 }
 
 var linkDetailTmpl = template.Must(template.New("linkdetail").Parse(linkDetailPageTemplate))
@@ -1777,7 +1818,42 @@ func serveLinkDetail(w http.ResponseWriter, r *http.Request, c *Linx) {
 		Linx:             c,
 		CreatedFormatted: time.Unix(c.DateCreated, 0).UTC().Format("Jan 2, 2006"),
 	}
+	// Build 30-day click histogram data server-side
+	daily, _ := db.LinkDailyClicks(c.ID, 30)
+	dayMap := make(map[string]int, len(daily))
+	for _, d := range daily {
+		dayMap[d.Date] = d.Count
+	}
+	now := time.Now()
+	max := 1
+	var bars []linkDetailBar
+	for d := 29; d >= 0; d-- {
+		dt := now.AddDate(0, 0, -d)
+		key := dt.Format("2006-01-02")
+		count := dayMap[key]
+		if count > max {
+			max = count
+		}
+		bars = append(bars, linkDetailBar{Date: key, Count: count})
+	}
+	for i := range bars {
+		if bars[i].Count > 0 {
+			bars[i].Height = max4(4, bars[i].Count*80/max)
+			data.HasClicks = true
+		}
+	}
+	data.DailyBars = bars
+	data.DateStart = bars[0].Date[5:]
+	data.DateMid = bars[len(bars)/2].Date[5:]
+	data.DateEnd = bars[len(bars)-1].Date[5:]
 	linkDetailTmpl.Execute(w, data)
+}
+
+func max4(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 var linkDetailPageTemplate = `<!DOCTYPE html>
@@ -1818,11 +1894,6 @@ body { display: flex; flex-direction: column; align-items: center; padding: 40px
   font-family: 'Consolas', 'Courier New', monospace; font-size: 1.5rem;
   font-weight: 700; color: var(--panel-heading); margin-bottom: 4px;
 }
-.detail-type {
-  display: inline-block; background: var(--btn-bg); color: var(--btn-text);
-  padding: 2px 10px; border-radius: 10px; font-size: 0.75rem;
-  font-weight: 600; text-transform: capitalize; margin-bottom: 16px;
-}
 .info-list { list-style: none; text-align: left; margin-bottom: 24px; }
 .info-item {
   display: flex; align-items: flex-start; gap: 12px; padding: 10px 0;
@@ -1840,6 +1911,13 @@ body { display: flex; flex-direction: column; align-items: center; padding: 40px
   transition: background 0.15s;
 }
 .visit-btn:hover { background: var(--btn-hover); }
+.detail-chart { margin-bottom: 24px; }
+.detail-chart-title { font-size: 0.75rem; color: var(--panel-path-text); text-transform: uppercase; margin-bottom: 8px; }
+.detail-bars { display: flex; align-items: flex-end; gap: 2px; height: 84px; }
+.detail-bar { flex: 1; background: var(--btn-bg); border-radius: 2px 2px 0 0; min-width: 2px; opacity: 0.7; }
+.detail-bar:hover { opacity: 1; }
+.detail-bar-labels { display: flex; justify-content: space-between; font-size: 0.6rem; color: var(--panel-path-text); margin-top: 4px; }
+.detail-chart-empty { font-size: 0.75rem; color: var(--panel-path-text); text-align: center; padding: 16px 0; }
 </style>
 </head>
 <body>
@@ -1847,7 +1925,6 @@ body { display: flex; flex-direction: column; align-items: center; padding: 40px
 <div class="detail-linx">
   <div class="link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
   <div class="detail-name">/{{.ShortName}}</div>
-  <div class="detail-type">Link</div>
   <ul class="info-list">
     <li class="info-item">
       <span class="info-label">URL</span>
@@ -1870,6 +1947,11 @@ body { display: flex; flex-direction: column; align-items: center; padding: 40px
       <span class="info-value">{{.CreatedFormatted}}</span>
     </li>{{end}}
   </ul>
+  <div class="detail-chart">
+    <div class="detail-chart-title">Clicks (30 days)</div>
+    {{if .HasClicks}}<div class="detail-bars">{{range .DailyBars}}<div class="detail-bar" style="height:{{.Height}}px" title="{{.Date}}: {{.Count}}"></div>{{end}}</div>
+    <div class="detail-bar-labels"><span>{{.DateStart}}</span><span>{{.DateMid}}</span><span>{{.DateEnd}}</span></div>{{else}}<div class="detail-chart-empty">No click history yet</div>{{end}}
+  </div>
   <a class="visit-btn" href="/{{.ShortName}}">Visit Link &#8594;</a>
 </div>
 </body>
@@ -2707,6 +2789,12 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .mbtn-danger:hover { background: var(--btn-danger-hover); }
 .mbtn-cancel { background: var(--panel-btn-bg); color: var(--panel-btn-text); }
 .mbtn-cancel:hover { background: var(--panel-btn-hover); }
+.btn-generate {
+  padding: 6px 12px; font-size: 0.78rem; border-radius: 4px; cursor: pointer;
+  background: var(--panel-btn-bg); color: var(--panel-btn-text);
+  border: 1px solid var(--input-border); font-family: inherit; white-space: nowrap;
+}
+.btn-generate:hover { background: var(--panel-btn-hover); }
 .dest-help-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--input-border);
@@ -2740,7 +2828,11 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .form-row input[readonly] {
   opacity: 0.6; cursor: default;
 }
-.hostname-prefix { color: var(--panel-heading); font-weight: 700; }
+.hostname-prefix { font-weight: 700; }
+.shortname-preview { color: var(--panel-heading); text-decoration: none; cursor: default; }
+.shortname-preview.has-name { cursor: pointer; }
+.shortname-preview.has-name:hover { text-decoration: underline; }
+.shortname-live { font-weight: 700; }
 .shortname-hints {
   position: absolute; left: 0; right: 0; top: 100%;
   max-height: 120px; overflow-y: auto; z-index: 10;
@@ -2798,6 +2890,42 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .toast.visible { display: block; }
 
 /* Scrollbar styling */
+/* Charts view */
+#charts-container {
+  flex: 1; overflow: auto; padding: 16px; border-radius: 8px;
+  border: 1px solid var(--panel-border); background: var(--panel-bg);
+}
+.stats-summary { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.stat-card {
+  flex: 1; min-width: 140px; padding: 16px; border-radius: 8px;
+  background: var(--bar-bg); border: 1px solid var(--panel-border); text-align: center;
+}
+.stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--panel-heading); }
+.stat-card .stat-label { font-size: 0.75rem; color: var(--panel-path-text); margin-top: 4px; }
+.charts-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.chart-panel {
+  flex: 1; min-width: 300px; padding: 16px; border-radius: 8px;
+  background: var(--bar-bg); border: 1px solid var(--panel-border);
+}
+.chart-title { font-size: 0.85rem; font-weight: 600; color: var(--panel-heading); margin-bottom: 12px; }
+.top-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; cursor: pointer; }
+.top-bar-row:hover .top-bar-fill { filter: brightness(1.15); }
+.top-bar-name {
+  width: 100px; font-size: 0.78rem; color: var(--panel-text); text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.top-bar-track { flex: 1; height: 20px; background: var(--input-bg); border-radius: 4px; overflow: hidden; }
+.top-bar-fill { height: 100%; background: var(--btn-bg); border-radius: 4px; transition: width 0.3s; }
+.top-bar-count { width: 50px; font-size: 0.72rem; color: var(--panel-path-text); }
+.daily-chart { display: flex; align-items: flex-end; gap: 2px; height: 160px; }
+.daily-bar {
+  flex: 1; background: var(--btn-bg); border-radius: 2px 2px 0 0;
+  min-width: 4px; transition: height 0.3s; cursor: default;
+}
+.daily-bar:hover { filter: brightness(1.2); }
+.daily-labels { display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--panel-path-text); margin-top: 4px; }
+.chart-empty { text-align: center; color: var(--panel-path-text); font-size: 0.82rem; padding: 40px 0; }
+
 #grid-container::-webkit-scrollbar { width: 10px; height: 10px; }
 #grid-container::-webkit-scrollbar-track { background: var(--panel-bg); }
 #grid-container::-webkit-scrollbar-thumb {
@@ -2848,6 +2976,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
       <button class="sort-btn sort-active" data-sort="az" onclick="setSortMode('az')" title="Sort A-Z" tabindex="-1">A-Z</button>
       <button class="sort-btn" data-sort="popular" onclick="setSortMode('popular')" title="Sort by most clicked" tabindex="-1">Popular</button>
       <button class="sort-btn" data-sort="recent" onclick="setSortMode('recent')" title="Sort by recently clicked" tabindex="-1">Recent</button>
+      <button class="sort-btn" data-sort="charts" onclick="setSortMode('charts')" title="Charts" tabindex="-1">Charts</button>
     </div>
     <div id="view-btns">
       <button id="viewGrid" class="view-btn view-active" onclick="setViewMode('grid')" title="Grid view" tabindex="-1">
@@ -2861,6 +2990,19 @@ body { display: flex; flex-direction: column; height: 100vh; }
   <div id="grid-container">
     <div id="link-grid"></div>
     <div id="no-results" class="hidden">Add some linx by pressing the Add Linx button (+) above.</div>
+  </div>
+  <div id="charts-container" class="hidden">
+    <div id="stats-summary" class="stats-summary"></div>
+    <div class="charts-row">
+      <div class="chart-panel">
+        <div class="chart-title">Top Links</div>
+        <div id="chart-top-links"></div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-title">Daily Clicks (last 30 days)</div>
+        <div id="chart-daily-clicks"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2896,7 +3038,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
           <option value="vendor">Vendor</option>
         </select>
       </div>
-      <div class="form-row" style="position:relative"><label>Short Name: <span class="hostname-prefix"></span></label><input type="text" id="newShortName" placeholder="e.g. github" spellcheck="false" autocomplete="off" /><div id="newShortNameHints" class="shortname-hints hidden"></div></div>
+      <div class="form-row" style="position:relative"><label>Short Name: <a class="shortname-preview" id="newShortNamePreview" target="_blank" rel="noopener"><span class="hostname-prefix"></span><span class="shortname-live"></span></a></label><div style="display:flex;gap:6px;align-items:center"><input type="text" id="newShortName" placeholder="e.g. github" spellcheck="false" autocomplete="off" style="flex:1" oninput="updateShortNamePreview('new')" /><button type="button" class="btn-generate" id="btnGenerate" onclick="generateShortCode()" title="Generate random short code">Generate</button></div><div id="newShortNameHints" class="shortname-hints hidden"></div></div>
       <div class="form-row"><label>Color</label>
         <div class="color-picker" id="newColorPicker">
           <div class="color-swatch selected" data-color="" style="background:transparent;border:2px dashed var(--input-border)" title="None" onclick="pickColor('new','')"></div>
@@ -2948,7 +3090,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
   <form class="modal-box" autocomplete="off" onsubmit="return false">
     <div class="modal-title" id="editModalTitle">Edit</div>
     <div class="modal-body">
-      <div class="form-row" style="position:relative"><label>Short Name: <span class="hostname-prefix"></span></label><input type="text" id="editShortName" spellcheck="false" autocomplete="off" /><div id="editShortNameHints" class="shortname-hints hidden"></div></div>
+      <div class="form-row" style="position:relative"><label>Short Name: <a class="shortname-preview" id="editShortNamePreview" target="_blank" rel="noopener"><span class="hostname-prefix"></span><span class="shortname-live"></span></a></label><input type="text" id="editShortName" spellcheck="false" autocomplete="off" oninput="updateShortNamePreview('edit')" /><div id="editShortNameHints" class="shortname-hints hidden"></div></div>
       <div class="form-row"><label>Color</label>
         <div class="color-picker" id="editColorPicker">
           <div class="color-swatch selected" data-color="" style="background:transparent;border:2px dashed var(--input-border)" title="None" onclick="pickColor('edit','')"></div>
@@ -3338,12 +3480,88 @@ function setSortMode(mode) {
   for (var i = 0; i < btns.length; i++) {
     btns[i].className = 'sort-btn' + (btns[i].getAttribute('data-sort') === mode ? ' sort-active' : '');
   }
-  filterLinx();
+  if (mode === 'charts') {
+    document.getElementById('grid-container').classList.add('hidden');
+    document.getElementById('charts-container').classList.remove('hidden');
+    loadStats();
+  } else {
+    document.getElementById('charts-container').classList.add('hidden');
+    document.getElementById('grid-container').classList.remove('hidden');
+    filterLinx();
+  }
   if (!_restoring) fetch('/api/settings', {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({key: 'sortMode', value: mode})
   }).catch(function(){});
+}
+
+// Charts / Stats
+function loadStats() {
+  fetch('/api/stats').then(function(r) { return r.json(); }).then(function(data) {
+    renderSummaryCards(data.summary);
+    renderTopLinksChart(data.topLinks);
+    renderDailyClicksChart(data.dailyClicks);
+  }).catch(function() {});
+}
+
+function renderSummaryCards(s) {
+  var el = document.getElementById('stats-summary');
+  el.innerHTML =
+    '<div class="stat-card"><div class="stat-value">' + (s.totalLinks || 0) + '</div><div class="stat-label">Total Links</div></div>' +
+    '<div class="stat-card"><div class="stat-value">' + (s.totalClicks || 0) + '</div><div class="stat-label">Total Clicks</div></div>' +
+    '<div class="stat-card"><div class="stat-value">' + escHtml(s.topLink || '—') + '</div><div class="stat-label">Top Link</div></div>' +
+    '<div class="stat-card"><div class="stat-value">' + (s.createdThisWeek || 0) + '</div><div class="stat-label">Created This Week</div></div>';
+}
+
+function renderTopLinksChart(links) {
+  var el = document.getElementById('chart-top-links');
+  if (!links || links.length === 0) {
+    el.innerHTML = '<div class="chart-empty">No click data yet</div>';
+    return;
+  }
+  var max = links[0].clickCount || 1;
+  var html = '';
+  for (var i = 0; i < links.length; i++) {
+    var pct = Math.round((links[i].clickCount / max) * 100);
+    html += '<div class="top-bar-row" onclick="window.location.href=\'/\' + decodeURIComponent(\'' + encodeURIComponent(links[i].shortName) + '\') + \'+\'">' +
+      '<div class="top-bar-name" title="' + escHtml(links[i].shortName) + '">' + escHtml(links[i].shortName) + '</div>' +
+      '<div class="top-bar-track"><div class="top-bar-fill" style="width:' + pct + '%"></div></div>' +
+      '<div class="top-bar-count">' + links[i].clickCount + '</div>' +
+    '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderDailyClicksChart(days) {
+  var el = document.getElementById('chart-daily-clicks');
+  if (!days || days.length === 0) {
+    el.innerHTML = '<div class="chart-empty">No click data yet — clicks will appear here as links are used</div>';
+    return;
+  }
+  // Fill in missing days to get a continuous 30-day range
+  var dayMap = {};
+  for (var i = 0; i < days.length; i++) dayMap[days[i].date] = days[i].count;
+  var filled = [];
+  var now = new Date();
+  for (var d = 29; d >= 0; d--) {
+    var dt = new Date(now);
+    dt.setDate(dt.getDate() - d);
+    var key = dt.toISOString().slice(0, 10);
+    filled.push({date: key, count: dayMap[key] || 0});
+  }
+  var max = 1;
+  for (var i = 0; i < filled.length; i++) { if (filled[i].count > max) max = filled[i].count; }
+  var barsHtml = '';
+  for (var i = 0; i < filled.length; i++) {
+    var h = filled[i].count > 0 ? Math.max(4, Math.round((filled[i].count / max) * 156)) : 0;
+    barsHtml += '<div class="daily-bar" style="height:' + h + 'px" title="' + filled[i].date + ': ' + filled[i].count + ' clicks"></div>';
+  }
+  var labels = '<span>' + filled[0].date.slice(5) + '</span>';
+  var mid = Math.floor(filled.length / 2);
+  labels += '<span>' + filled[mid].date.slice(5) + '</span>';
+  labels += '<span>' + filled[filled.length - 1].date.slice(5) + '</span>';
+  el.innerHTML = '<div class="daily-chart">' + barsHtml + '</div><div class="daily-labels">' + labels + '</div>';
 }
 
 var badgeLabels = {employee: 'Emp', customer: 'Cus', vendor: 'Ven'};
@@ -3650,6 +3868,7 @@ function showNewLinxModal() {
   document.getElementById('newTags').value = '';
   pickColor('new', '');
   toggleNewLinxType();
+  updateShortNamePreview('new');
   document.getElementById('newOverlay').classList.remove('hidden');
   document.getElementById('newShortName').focus();
 }
@@ -3664,9 +3883,11 @@ function toggleNewLinxType() {
   if (t === 'link') {
     document.getElementById('newLinkFields').classList.remove('hidden');
     document.getElementById('newPersonFields').classList.add('hidden');
+    document.getElementById('btnGenerate').style.display = '';
   } else {
     document.getElementById('newLinkFields').classList.add('hidden');
     document.getElementById('newPersonFields').classList.remove('hidden');
+    document.getElementById('btnGenerate').style.display = 'none';
   }
 }
 
@@ -3677,6 +3898,35 @@ function formatPhone(input) {
   else if (digits.length > 3) input.value = digits.slice(0,3) + '-' + digits.slice(3);
   else input.value = digits;
 }
+// Generate random short code (bit.ly style)
+function generateShortCode() {
+  var chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  var code = '';
+  for (var i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+  var input = document.getElementById('newShortName');
+  input.value = code;
+  updateShortNameHints('newShortName', 'newShortNameHints');
+  updateShortNamePreview('new');
+  input.focus();
+}
+
+// Live short name preview in label
+function updateShortNamePreview(prefix) {
+  var val = document.getElementById(prefix + 'ShortName').value.trim();
+  var preview = document.getElementById(prefix + 'ShortNamePreview');
+  var live = preview.querySelector('.shortname-live');
+  live.textContent = val;
+  if (val) {
+    var proto = window.location.protocol + '//';
+    var host = _shortHostname || window.location.host;
+    preview.href = proto + host + '/' + encodeURIComponent(val);
+    preview.classList.add('has-name');
+  } else {
+    preview.removeAttribute('href');
+    preview.classList.remove('has-name');
+  }
+}
+
 // Short name hints — show matching existing names as you type
 function updateShortNameHints(inputId, hintsId) {
   var val = document.getElementById(inputId).value.trim().toLowerCase();
@@ -3753,7 +4003,7 @@ function saveNewLinx() {
   }).then(function() {
     closeNewLinxModal();
     loadLinx();
-    showToast((linxType === 'link' ? 'Link' : typeBadge(linxType)) + ' created', 'success');
+    showToast('Linx created', 'success');
   }).catch(function(e) {
     showToast(e.message || 'Failed to create linx', 'error');
   });
@@ -3798,6 +4048,7 @@ function showEditModal(lnx, readonly) {
   document.getElementById('editCreated').textContent = formatTime(lnx.dateCreated);
   document.getElementById('editLastClicked').textContent = formatTime(lnx.lastClicked);
   document.getElementById('editClicks').textContent = String(lnx.clickCount || 0);
+  updateShortNamePreview('edit');
 
   // Toggle readonly mode
   var fields = document.querySelectorAll('#editOverlay input, #editOverlay select, #editOverlay textarea');
@@ -4053,6 +4304,7 @@ var _tsMode = false;
 var _isAdmin = false;
 var _adminMode = false;
 var _localhostAdmin = false;
+var _shortHostname = '';
 var _userPerms = ['add','update','delete'];
 function hasPerm(p) {
   return _userPerms.indexOf('*') >= 0 || _userPerms.indexOf(p) >= 0;
@@ -4097,8 +4349,10 @@ function toggleAdminMode(on) {
       }).catch(function(){});
     }
     if (data && data.hostname) {
+      var prefix = (data.tsMode && data.tsHostname) ? data.tsHostname : data.hostname;
+      _shortHostname = prefix;
       var spans = document.querySelectorAll('.hostname-prefix');
-      for (var i = 0; i < spans.length; i++) spans[i].textContent = data.hostname + '/';
+      for (var i = 0; i < spans.length; i++) spans[i].textContent = prefix + '/';
     }
   }).catch(function(){});
 

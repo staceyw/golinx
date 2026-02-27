@@ -31,3 +31,10 @@ CREATE TABLE IF NOT EXISTS Settings (
     value    TEXT NOT NULL,
     PRIMARY KEY (username, key)
 );
+
+CREATE TABLE IF NOT EXISTS ClickLog (
+    LinxID    INTEGER NOT NULL,
+    ClickedAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    FOREIGN KEY (LinxID) REFERENCES Linx(ID) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_clicklog_clickedat ON ClickLog(ClickedAt);
