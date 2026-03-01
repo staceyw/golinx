@@ -301,6 +301,23 @@ RestartSec=5
 WantedBy=multi-user.target
 INNEREOF"
 
+# Generate local readme
+pct exec "$CTID" -- bash -c "cat > ${DATA_DIR}/readme.txt << 'INNEREOF'
+GoLinx - URL shortener and people directory
+
+Managed as a systemd service. Common commands (run from Proxmox host):
+
+  pct exec $CTID -- systemctl status golinx       # check status
+  pct exec $CTID -- systemctl restart golinx      # restart
+  pct exec $CTID -- journalctl -u golinx -f       # view logs
+
+Config:          ${DATA_DIR}/golinx.toml
+Binary:          ${BIN_PATH}
+
+Project page:    https://staceyw.github.io/GoLinx
+Documentation:   https://github.com/staceyw/GoLinx#documentation
+INNEREOF"
+
 # Enable and start
 pct exec "$CTID" -- systemctl daemon-reload
 pct exec "$CTID" -- systemctl enable --now golinx

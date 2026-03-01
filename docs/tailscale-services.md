@@ -1,4 +1,4 @@
-# Tailscale Services
+# Tailscale Services History
 
 The Tailscale Services tab in the admin console is much newer (launched late 2025) than the original `tailscale serve` and `tsnet` features.
 

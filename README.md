@@ -18,13 +18,19 @@ curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install
 iex (irm https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install.ps1)
 ```
 
+**Linux systemd service:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-service.sh | sudo bash
+```
+
 **Proxmox LXC:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-lxc.sh | bash
 ```
 
-Downloads the binary and example config into the current directory (script installers). The LXC script creates a Debian 12 container with GoLinx running as a service.
+The script installers download the binary into the current directory. The service and LXC scripts create a systemd service that starts automatically.
 
 ## Quick Start
 

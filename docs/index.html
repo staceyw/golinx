@@ -118,8 +118,13 @@ a:hover{text-decoration:underline}
           <pre>iex (irm https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install.ps1)</pre>
           <button class="copy-btn" onclick="copyCmd(this)">Copy</button>
         </div>
+        <div class="os-label">Linux systemd service</div>
+        <div class="cmd-wrap">
+          <pre>curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-service.sh | sudo bash</pre>
+          <button class="copy-btn" onclick="copyCmd(this)">Copy</button>
+        </div>
       </div>
-      <p class="download-extra" style="text-align:center;margin-top:20px">Downloads the binary and config template into the current directory.</p>
+      <p class="download-extra" style="text-align:center;margin-top:20px">The script installer downloads the binary into the current directory. The service installer creates a systemd service that starts automatically.</p>
     </div>
 
     <div id="tab-manual" class="install-panel">
