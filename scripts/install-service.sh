@@ -1,5 +1,8 @@
 #!/bin/bash
-# Install GoLinx as a systemd service on Linux.
+# Install or upgrade GoLinx as a systemd service on Linux.
+# Safe to run multiple times — detects existing installations, prompts before
+# overwriting config, and always updates the binary, service file, and readme.
+#
 # Usage:  curl -fsSL https://raw.githubusercontent.com/staceyw/GoLinx/main/scripts/install-service.sh | sudo bash
 set -e
 
@@ -37,6 +40,20 @@ prompt() {
   fi
 }
 
+# --- Detect existing installation -------------------------------------------
+
+EXISTING_DIR=""
+EXISTING_USER=""
+IS_UPGRADE=false
+
+if [ -f "$SERVICE_FILE" ]; then
+  EXISTING_DIR=$(grep -oP '(?<=WorkingDirectory=).+' "$SERVICE_FILE" 2>/dev/null || true)
+  EXISTING_USER=$(grep -oP '(?<=User=).+' "$SERVICE_FILE" 2>/dev/null || true)
+  if [ -n "$EXISTING_DIR" ]; then
+    IS_UPGRADE=true
+  fi
+fi
+
 # --- Gather configuration ----------------------------------------------------
 
 echo ""
@@ -44,9 +61,20 @@ echo "GoLinx Service Installer"
 echo "========================"
 echo ""
 
-# Data directory
+if $IS_UPGRADE; then
+  echo "  Existing installation detected:"
+  echo "    Data dir: $EXISTING_DIR"
+  echo "    Run as:   $EXISTING_USER"
+  echo ""
+fi
+
+# Data directory — default to existing installation or /home/<user>/golinx
 REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
-DEFAULT_DIR="/home/${REAL_USER}/golinx"
+if [ -n "$EXISTING_DIR" ]; then
+  DEFAULT_DIR="$EXISTING_DIR"
+else
+  DEFAULT_DIR="/home/${REAL_USER}/golinx"
+fi
 
 prompt "Data directory (config + database) [$DEFAULT_DIR]: "
 DATA_DIR="${REPLY:-$DEFAULT_DIR}"
@@ -97,8 +125,12 @@ case "$LISTENER" in
     ;;
 esac
 
-# Run-as user
-DETECTED_USER=$(stat -c '%U' "$DATA_DIR" 2>/dev/null || stat -f '%Su' "$DATA_DIR" 2>/dev/null || echo "$REAL_USER")
+# Run-as user — default to existing or detect from data dir owner
+if [ -n "$EXISTING_USER" ]; then
+  DETECTED_USER="$EXISTING_USER"
+else
+  DETECTED_USER=$(stat -c '%U' "$DATA_DIR" 2>/dev/null || stat -f '%Su' "$DATA_DIR" 2>/dev/null || echo "$REAL_USER")
+fi
 prompt "Run service as user [$DETECTED_USER]: "
 RUN_USER="${REPLY:-$DETECTED_USER}"
 
@@ -110,7 +142,11 @@ fi
 # --- Confirm ------------------------------------------------------------------
 
 echo ""
-echo "Configuration:"
+if $IS_UPGRADE; then
+  echo "Upgrade plan:"
+else
+  echo "Configuration:"
+fi
 echo "  Binary:      $BIN_PATH"
 echo "  Data dir:    $DATA_DIR"
 echo "  Listener:    $LISTENER"
@@ -122,10 +158,22 @@ if [ -n "$TS_HOSTNAME" ]; then
 fi
 echo "  Run as:      $RUN_USER"
 echo ""
-prompt "Install and start service? [Y/n] "
+if $IS_UPGRADE; then
+  prompt "Upgrade and restart service? [Y/n] "
+else
+  prompt "Install and start service? [Y/n] "
+fi
 case "$REPLY" in
   [nN]*) echo "Aborted."; exit 0 ;;
 esac
+
+# --- Stop existing service before upgrading -----------------------------------
+
+if $IS_UPGRADE; then
+  echo ""
+  echo "Stopping existing service ..."
+  systemctl stop golinx 2>/dev/null || true
+fi
 
 # --- Download binary ----------------------------------------------------------
 
@@ -142,12 +190,20 @@ fi
 chmod +x "$BIN_PATH"
 echo "  Installed: $BIN_PATH"
 
-# --- Generate config if not present -------------------------------------------
+# --- Generate or update config ------------------------------------------------
 
 CONFIG_FILE="${DATA_DIR}/golinx.toml"
+WRITE_CONFIG=true
+
 if [ -f "$CONFIG_FILE" ]; then
-  echo "  Config exists: $CONFIG_FILE (keeping existing)"
-else
+  prompt "  Config exists: $CONFIG_FILE. Overwrite? [y/N] "
+  case "$REPLY" in
+    [yY]*) echo "  Overwriting config." ;;
+    *)     echo "  Keeping existing config."; WRITE_CONFIG=false ;;
+  esac
+fi
+
+if $WRITE_CONFIG; then
   echo "  Generating: $CONFIG_FILE"
   if [ -n "$LISTENER2" ]; then
     cat > "$CONFIG_FILE" <<TOML
@@ -178,12 +234,47 @@ fi
 # Ensure data dir is owned by run user
 chown "$RUN_USER" "$DATA_DIR"
 
+# --- Always update readme.txt -------------------------------------------------
+
+cat > "${DATA_DIR}/readme.txt" <<EOF
+GoLinx - URL shortener and people directory
+
+Managed as a systemd service.
+
+Service commands:
+  sudo systemctl status golinx            # check status
+  sudo systemctl start golinx             # start
+  sudo systemctl stop golinx              # stop
+  sudo systemctl restart golinx           # restart
+  sudo systemctl enable golinx            # start on boot
+  sudo systemctl disable golinx           # do not start on boot
+
+Logs:
+  journalctl -u golinx -f                 # follow live logs
+  journalctl -u golinx --since "1 hour ago"
+
+List all services:
+  systemctl list-units --type=service     # all running services
+  systemctl list-units --type=service --state=running
+  systemctl list-unit-files --type=service --state=enabled
+
+Paths:
+  Config:          ${CONFIG_FILE}
+  Binary:          ${BIN_PATH}
+  Service file:    ${SERVICE_FILE}
+
+Upgrade:
+  curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install-service.sh | sudo bash
+
+Project page:    https://staceyw.github.io/GoLinx
+Documentation:   https://github.com/$REPO#documentation
+EOF
+chown "$RUN_USER" "${DATA_DIR}/readme.txt"
+echo "  Updated: ${DATA_DIR}/readme.txt"
+
 # --- Create systemd service ---------------------------------------------------
 
 echo "Creating systemd service ..."
-
-# Build ExecStart — just the binary, config file in WorkingDirectory handles the rest
-EXEC_START="$BIN_PATH"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -194,7 +285,7 @@ After=network.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$DATA_DIR
-ExecStart=$EXEC_START
+ExecStart=$BIN_PATH
 Restart=on-failure
 RestartSec=5
 
@@ -211,7 +302,11 @@ systemctl enable golinx
 systemctl start golinx
 
 echo ""
-echo "Done! GoLinx is running."
+if $IS_UPGRADE; then
+  echo "Done! GoLinx has been upgraded and restarted."
+else
+  echo "Done! GoLinx is running."
+fi
 echo ""
 echo "  Status:   sudo systemctl status golinx"
 echo "  Logs:     journalctl -u golinx -f"
