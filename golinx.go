@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	_ "modernc.org/sqlite"
@@ -327,6 +328,10 @@ func runResolve(path, link string) error {
 		fmt.Printf("/%s is a %s profile: %s %s\n", lnx.ShortName, lnx.Type, lnx.FirstName, lnx.LastName)
 		return nil
 	}
+	if lnx.IsDocumentType() {
+		fmt.Printf("/%s is a document: %s\n", lnx.ShortName, lnx.Description)
+		return nil
+	}
 
 	// Expand using the same logic as serveRedirect.
 	env := expandEnv{
@@ -576,6 +581,161 @@ func validateTSHostname(name string) error {
 }
 
 // Run is the main entry point for the application.
+// seedDefaults creates sample linx on first run (empty DB) so new users
+// have something to see instead of an empty grid.
+func seedDefaults() {
+	count, err := db.LinxCount("")
+	if err != nil || count > 0 {
+		return
+	}
+
+	// Google search — the link everyone adds eventually.
+	db.Save(&Linx{
+		Type:           LinxTypeLink,
+		ShortName:      "search",
+		DestinationURL: "https://www.google.com/search?q={{.Path}}",
+		Description:    "Google Search (try go/search/how to mass-customize a link shortener)",
+	})
+
+	// First employee.
+	db.Save(&Linx{
+		Type:      LinxTypeEmployee,
+		ShortName: "ceo",
+		FirstName: "Linky",
+		LastName:  "McShortlink",
+		Title:     "Chief Everything Officer",
+		Email:     "linky@localhost",
+	})
+
+	// Our Mission document (Easter egg).
+	id, err := db.Save(&Linx{
+		Type:        LinxTypeDocument,
+		ShortName:   "mission",
+		Description: "Our Mission",
+	})
+	if err == nil {
+		db.SaveDocument(id, []byte(missionMarkdown), "text/markdown")
+	}
+
+	// Performance review — HTML showcase.
+	id, err = db.Save(&Linx{
+		Type:        LinxTypeDocument,
+		ShortName:   "review",
+		Description: "Q1 Performance Review: Linky McShortlink",
+	})
+	if err == nil {
+		db.SaveDocument(id, []byte(reviewHTML), "text/html")
+	}
+}
+
+const missionMarkdown = `# Our Mission
+
+Our mission is simple: to be the absolute best URL shortener the world has ever seen.
+
+While others are out there curing diseases and solving climate change, we're laser-focused on what *truly* matters — turning long URLs into short ones. You're welcome.
+
+## Core Values
+
+- **Move Fast and Redirect Things** — Every millisecond counts. Our redirects are so fast they finish before they start.
+- **Radical Shortness** — We believe every URL deserves to be shorter. Even the short ones.
+- **Synergy** — We don't know what this means, but our investors love it.
+- **Innovation** — We put a link shortener on your Tailnet. Nobody asked for this. You're welcome, again.
+
+## Our Story
+
+It started with a developer who was mass-customizing a link-shortener called "golinks."
+He got carried away. Way, way carried away.
+What began as a simple fork turned into a full-blown URL shortener, people directory, document reader, and whatever else seemed cool that week.
+
+We regret nothing.
+
+## Looking Ahead
+
+Our five-year plan includes:
+
+1. Continue adding features nobody requested
+2. Write more TOML config options than anyone will ever read
+3. Achieve mass adoption (at least 3 users)
+4. IPO (Initial Proxmox Offering)
+
+*If you're reading this, you've found our Easter egg. Feel free to delete this and create something useful. Or don't. We're not your boss.*
+`
+
+const reviewHTML = `<h1>Q1 Performance Review</h1>
+<p><strong>Employee:</strong> Linky McShortlink<br>
+<strong>Title:</strong> Chief Everything Officer<br>
+<strong>Review Period:</strong> January 1 – March 31<br>
+<strong>Reviewer:</strong> The Entire Internet</p>
+
+<hr>
+
+<h2>Performance Summary</h2>
+
+<table>
+<thead>
+<tr><th>Category</th><th>Rating</th><th>Comments</th></tr>
+</thead>
+<tbody>
+<tr><td>URL Shortening</td><td>Exceeds Expectations</td><td>Has never once made a URL longer. Flawless record.</td></tr>
+<tr><td>Redirect Speed</td><td>Outstanding</td><td>301s so fast, photons feel slow.</td></tr>
+<tr><td>Feature Creep</td><td>Needs Improvement</td><td>Was hired to shorten URLs. Now runs a people directory, document reader, and ping utility. Nobody asked for any of this.</td></tr>
+<tr><td>Work-Life Balance</td><td>Not Applicable</td><td>Is a binary. Does not sleep. Does not eat. Restarts only when told.</td></tr>
+<tr><td>Team Collaboration</td><td>Meets Expectations</td><td>Works well with SQLite. Tolerates Tailscale. Ignores Redis entirely.</td></tr>
+</tbody>
+</table>
+
+<h2>Key Accomplishments</h2>
+
+<ul>
+<li>Successfully redirected <strong>tens</strong> of URLs (we're still in early adoption)</li>
+<li>Survived multiple <code>kill -9</code> attempts with zero complaints</li>
+<li>Maintained 100% uptime during periods when no one was looking</li>
+<li>Learned to render Markdown despite being a URL shortener</li>
+<li>Achieved <em>mass adoption</em> across 1–3 devices</li>
+</ul>
+
+<h2>Areas for Growth</h2>
+
+<ol>
+<li><strong>Scope management</strong> — When asked to add "just one more feature," practice saying no. You are a link shortener. Act like it.</li>
+<li><strong>User acquisition</strong> — Current user base fits comfortably in a Proxmox container. And a small one.</li>
+<li><strong>Documentation</strong> — The config file has more comments than the codebase. This is somehow both impressive and concerning.</li>
+</ol>
+
+<h2>Peer Feedback</h2>
+
+<blockquote>
+<p>"Linky is the hardest-working single binary I've ever deployed. Always there when I need a redirect. Never judges my browsing habits." — <em>Anonymous Tailnet User</em></p>
+</blockquote>
+
+<blockquote>
+<p>"I asked for a URL shortener. I got an entire SaaS platform in a 15MB executable. I'm not mad, just confused." — <em>The Developer</em></p>
+</blockquote>
+
+<blockquote>
+<p>"SELECT * FROM Linx WHERE appreciation = 'maximum'" — <em>SQLite</em></p>
+</blockquote>
+
+<h2>Goals for Next Quarter</h2>
+
+<table>
+<thead>
+<tr><th>Goal</th><th>Priority</th><th>Likelihood</th></tr>
+</thead>
+<tbody>
+<tr><td>Resist adding a built-in email server</td><td>Critical</td><td>Low</td></tr>
+<tr><td>Get a second user</td><td>High</td><td>Moderate</td></tr>
+<tr><td>Update the README before it becomes historical fiction</td><td>Medium</td><td>Uncertain</td></tr>
+<tr><td>Achieve sentience</td><td>Stretch</td><td>Pending TOML config option</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<p><strong>Overall Rating: Exceeds Expectations</strong></p>
+<p><em>Linky continues to be an invaluable member of the team, primarily because Linky is the entire team. Keep up the mass-customizing work.</em></p>
+`
+
 func Run() error {
 	// Support -? and --? as help flags.
 	for _, arg := range os.Args[1:] {
@@ -673,6 +833,7 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("NewSQLiteDB: %w", err)
 	}
+	seedDefaults()
 
 	// Start background purge of expired soft-deleted items.
 	purgeCtx, purgeCancel := context.WithCancel(context.Background())
@@ -1020,6 +1181,8 @@ func serveHandler() http.Handler {
 	mux.HandleFunc("POST /api/linx/{id}/restore", apiLinxRestore)
 	mux.HandleFunc("POST /api/linx/{id}/avatar", apiLinxAvatarUpload)
 	mux.HandleFunc("GET /api/linx/{id}/avatar", apiLinxAvatarGet)
+	mux.HandleFunc("POST /api/linx/{id}/document", apiLinxDocumentUpload)
+	mux.HandleFunc("GET /api/linx/{id}/document", apiLinxDocumentGet)
 	mux.HandleFunc("GET /api/settings", apiSettingsGet)
 	mux.HandleFunc("PUT /api/settings", apiSettingsPut)
 	mux.HandleFunc("GET /api/whoami", apiWhoAmI)
@@ -1051,7 +1214,7 @@ func serveAddLink(w http.ResponseWriter, r *http.Request) {
 }
 
 var validLinxTypes = map[string]bool{
-	LinxTypeLink: true, LinxTypeEmployee: true, LinxTypeCustomer: true, LinxTypeVendor: true,
+	LinxTypeLink: true, LinxTypeEmployee: true, LinxTypeCustomer: true, LinxTypeVendor: true, LinxTypeDocument: true,
 }
 
 func apiLinxList(w http.ResponseWriter, r *http.Request) {
@@ -1153,6 +1316,11 @@ func apiLinxCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		if msg := detectLinkLoop(payload.ShortName, payload.DestinationURL); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+	} else if payload.Type == LinxTypeDocument {
+		if payload.Description == "" {
+			http.Error(w, "description (title) is required for documents", http.StatusBadRequest)
 			return
 		}
 	} else {
@@ -1277,6 +1445,11 @@ func apiLinxUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		if msg := detectLinkLoop(payload.ShortName, payload.DestinationURL); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+	} else if payload.Type == LinxTypeDocument {
+		if payload.Description == "" {
+			http.Error(w, "description (title) is required for documents", http.StatusBadRequest)
 			return
 		}
 	} else {
@@ -1518,6 +1691,54 @@ func apiLinxAvatarGet(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+var validDocMimes = map[string]bool{
+	"text/markdown": true, "text/html": true, "text/plain": true,
+}
+
+func apiLinxDocumentUpload(w http.ResponseWriter, r *http.Request) {
+	if isLocalUser(r) && !hasUserPerm("update") {
+		http.Error(w, "permission denied", http.StatusForbidden)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var payload struct {
+		Content string `json:"content"`
+		Mime    string `json:"mime"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 5<<20)).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if !validDocMimes[payload.Mime] {
+		payload.Mime = "text/markdown"
+	}
+	if err := db.SaveDocument(id, []byte(payload.Content), payload.Mime); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func apiLinxDocumentGet(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	data, mime, err := db.LoadDocument(id)
+	if err != nil || len(data) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data)
+}
+
 // expandEnv is the template environment available to destination URL templates.
 type expandEnv struct {
 	Now   time.Time  // current time (UTC)
@@ -1613,6 +1834,8 @@ func serveRedirect(w http.ResponseWriter, r *http.Request) {
 		}
 		if lnx.IsPersonType() {
 			serveProfilePage(w, r, lnx)
+		} else if lnx.IsDocumentType() {
+			serveDocumentPage(w, r, lnx)
 		} else {
 			serveLinkDetail(w, r, lnx)
 		}
@@ -1632,6 +1855,10 @@ func serveRedirect(w http.ResponseWriter, r *http.Request) {
 	}
 	if lnx.IsPersonType() {
 		serveProfilePage(w, r, lnx)
+		return
+	}
+	if lnx.IsDocumentType() {
+		serveDocumentPage(w, r, lnx)
 		return
 	}
 
@@ -2096,6 +2323,8 @@ func apiSuggest(w http.ResponseWriter, r *http.Request) {
 			if lnx.Title != "" {
 				descriptions[i] += " — " + lnx.Title
 			}
+		} else if lnx.IsDocumentType() {
+			descriptions[i] = lnx.Description
 		} else {
 			descriptions[i] = lnx.DestinationURL
 		}
@@ -2301,7 +2530,7 @@ td code {
 {{range .Items}}<tr id="row-{{.ID}}">
   <td><code>{{.ShortName}}</code></td>
   <td class="type-cell">{{.Type}}</td>
-  <td class="dest-cell">{{if .IsPersonType}}{{.FirstName}} {{.LastName}}{{else}}{{.DestinationURL}}{{end}}</td>
+  <td class="dest-cell">{{if .IsPersonType}}{{.FirstName}} {{.LastName}}{{else if .IsDocumentType}}{{.Description}}{{else}}{{.DestinationURL}}{{end}}</td>
   <td class="date-cell">{{.DeletedFormatted}}</td>
   {{if not $.KeepForever}}<td class="date-cell">{{.ExpiresFormatted}}</td>{{end}}
   <td><button class="restore-btn" onclick="restoreItem({{.ID}})">Undelete</button></td>
@@ -2746,6 +2975,144 @@ func apiDBPut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"added": added, "skipped": skipped})
 }
 
+// ---------------------------------------------------------------------------
+// Document reader page
+// ---------------------------------------------------------------------------
+
+var documentTmpl = template.Must(template.New("document").Parse(documentPageTemplate))
+
+func serveDocumentPage(w http.ResponseWriter, r *http.Request, c *Linx) {
+	data, mime, err := db.LoadDocument(c.ID)
+	if err != nil || len(data) == 0 {
+		http.Error(w, "document content not found", http.StatusNotFound)
+		return
+	}
+
+	var rendered string
+	switch mime {
+	case "text/markdown":
+		md := goldmark.New(goldmark.WithExtensions(extension.Table))
+		var buf bytes.Buffer
+		md.Convert(data, &buf)
+		p := bluemonday.UGCPolicy()
+		rendered = p.Sanitize(buf.String())
+	case "text/html":
+		p := bluemonday.UGCPolicy()
+		rendered = p.Sanitize(string(data))
+	default: // text/plain or unknown
+		rendered = `<pre class="doc-pre">` + template.HTMLEscapeString(string(data)) + `</pre>`
+	}
+
+	go db.IncrementClick(c.ShortName)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	documentTmpl.Execute(w, struct {
+		*Linx
+		RenderedHTML template.HTML
+	}{c, template.HTML(rendered)})
+}
+
+var documentPageTemplate = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Description}} - GoLinx</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+:root {
+  --bar-bg: #1e1e2e; --bar-border: #313244; --bar-text: #cdd6f4;
+  --btn-bg: #89b4fa; --btn-text: #1e1e2e;
+  --panel-bg: #1e1e2e; --panel-border: #313244; --panel-text: #cdd6f4;
+  --panel-heading: #89b4fa; --panel-path-text: #a6adc8;
+  --panel-btn-bg: #45475a; --panel-btn-text: #cdd6f4;
+  --body-bg: #11111b;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--body-bg); color: var(--panel-text);
+}
+body { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; }
+.back-link {
+  position: absolute; top: 16px; left: 20px; color: var(--btn-bg);
+  text-decoration: none; font-size: 0.85rem;
+}
+.back-link:hover { text-decoration: underline; }
+.doc-page {
+  background: var(--panel-bg); border: 1px solid var(--panel-border);
+  border-radius: 12px; padding: 40px; max-width: 750px; width: 100%;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.doc-header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--panel-border); }
+.doc-header h1 { font-size: 1.5rem; color: var(--panel-heading); margin-bottom: 8px; }
+.doc-meta { display: flex; gap: 16px; font-size: 0.8rem; color: var(--panel-path-text); }
+h1 { font-size: 1.5rem; color: var(--panel-heading); margin: 24px 0 12px; }
+h2 {
+  font-size: 1.15rem; color: var(--panel-heading); margin: 24px 0 10px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--panel-border);
+}
+h3 { font-size: 1rem; color: var(--panel-heading); margin: 20px 0 8px; }
+h4, h5, h6 { font-size: 0.9rem; color: var(--panel-heading); margin: 16px 0 6px; }
+p, li { font-size: 0.88rem; line-height: 1.7; color: var(--panel-text); }
+p { margin-bottom: 10px; }
+ul, ol { padding-left: 24px; margin-bottom: 10px; }
+li { margin-bottom: 4px; }
+a { color: var(--btn-bg); }
+a:hover { text-decoration: underline; }
+blockquote {
+  border-left: 3px solid var(--panel-border); padding: 8px 16px; margin: 10px 0;
+  color: var(--panel-path-text); font-style: italic;
+}
+code {
+  background: var(--panel-btn-bg); color: var(--panel-btn-text);
+  padding: 1px 6px; border-radius: 3px; font-size: 0.82rem;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+pre {
+  background: var(--panel-btn-bg); border-radius: 6px; padding: 12px 16px;
+  margin: 10px 0 14px; overflow-x: auto;
+}
+pre code {
+  background: none; padding: 0; border-radius: 0; font-size: 0.82rem;
+  color: var(--panel-btn-text);
+}
+.doc-pre {
+  background: var(--panel-btn-bg); border-radius: 6px; padding: 16px 20px;
+  overflow-x: auto; font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.85rem; line-height: 1.6; white-space: pre-wrap;
+  word-break: break-word; color: var(--panel-btn-text);
+}
+table {
+  width: 100%; border-collapse: collapse; margin: 10px 0 14px;
+  font-size: 0.84rem;
+}
+th, td {
+  text-align: left; padding: 6px 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+th { color: var(--panel-heading); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+td { color: var(--panel-text); }
+td code { font-size: 0.8rem; }
+img { max-width: 100%; height: auto; border-radius: 6px; margin: 8px 0; }
+hr { border: none; border-top: 1px solid var(--panel-border); margin: 20px 0; }
+</style>
+</head>
+<body>
+<a class="back-link" href="/">&#8592; GoLinx</a>
+<div class="doc-page">
+  <div class="doc-header">
+    <h1>{{.Description}}</h1>
+    <div class="doc-meta">
+      <span>/{{.ShortName}}</span>
+      <span>{{.ClickCount}} views</span>
+    </div>
+  </div>
+  <div class="doc-content">{{.RenderedHTML}}</div>
+</div>
+</body>
+</html>`
+
 func serveExport(w http.ResponseWriter, r *http.Request) {
 	items, err := db.LoadAll("")
 	if err != nil {
@@ -3049,6 +3416,16 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .profile-name { font-weight: 700; font-size: 0.95rem; color: var(--panel-heading); }
 .profile-email { font-size: 0.78rem; color: var(--panel-path-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-short { font-size: 0.75rem; color: var(--panel-path-text); }
+.linx-item.doc-linx { border-left: 3px solid #a6e3a1; }
+.doc-linx-body { display: flex; gap: 12px; align-items: flex-start; }
+.doc-icon {
+  width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
+  background: var(--panel-btn-bg); display: flex; align-items: center;
+  justify-content: center;
+}
+.doc-icon svg { width: 22px; height: 22px; color: #a6e3a1; }
+.doc-info { flex: 1; min-width: 0; }
+.doc-short { font-size: 0.75rem; color: var(--panel-path-text); }
 .linx-badge {
   background: var(--btn-bg); color: var(--btn-text); padding: 2px 8px;
   border-radius: 10px; font-size: 0.68rem; font-weight: 600;
@@ -3410,6 +3787,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
           <option value="employee">Employee</option>
           <option value="customer">Customer</option>
           <option value="vendor">Vendor</option>
+          <option value="document">Document</option>
         </select>
       </div>
       <div class="form-row" style="position:relative"><label>Short Name: <a class="shortname-preview" id="newShortNamePreview" target="_blank" rel="noopener"><span class="hostname-prefix"></span><span class="shortname-live"></span></a></label><div style="display:flex;gap:6px;align-items:center"><input type="text" id="newShortName" placeholder="e.g. github" spellcheck="false" autocomplete="off" style="flex:1" oninput="updateShortNamePreview('new')" /><button type="button" class="btn-generate" id="btnGenerate" onclick="generateShortCode()" title="Generate random short code">Generate</button></div><div id="newShortNameHints" class="shortname-hints hidden"></div></div>
@@ -3449,6 +3827,21 @@ body { display: flex; flex-direction: column; height: 100vh; }
           <div class="icon-input" style="margin-bottom:6px"><span class="icon-prefix"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></span><input type="text" id="newXLink" placeholder="https://x.com/..." spellcheck="false" /></div>
           <div class="icon-input"><span class="icon-prefix"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></span><input type="text" id="newLinkedInLink" placeholder="https://linkedin.com/in/..." spellcheck="false" /></div>
         </div>
+      </div>
+      <div id="newDocumentFields" class="hidden">
+        <div class="form-row"><label>Title</label><input type="text" id="newDocTitle" placeholder="Document title" /></div>
+        <div class="form-row"><label>Format</label>
+          <select id="newDocFormat" style="width:100%;padding:8px 10px;font-size:0.85rem;background:var(--input-bg);border:1px solid var(--input-border);border-radius:4px;color:var(--input-text);outline:none;font-family:inherit">
+            <option value="text/markdown">Markdown</option>
+            <option value="text/html">HTML</option>
+            <option value="text/plain">Plain Text</option>
+          </select>
+        </div>
+        <div class="form-row"><label>Content</label>
+          <input type="file" id="newDocFile" accept=".md,.markdown,.html,.htm,.txt,.text" style="font-size:0.78rem;color:var(--panel-text);margin-bottom:6px" />
+          <textarea id="newDocContent" placeholder="Enter or paste content..." rows="10" style="width:100%;font-family:'SFMono-Regular',Consolas,monospace;font-size:0.82rem;padding:8px 10px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:4px;color:var(--input-text);resize:vertical;outline:none"></textarea>
+        </div>
+        <div class="form-row"><label>Owner</label><input type="text" id="newDocOwner" placeholder="Optional owner" spellcheck="false" /></div>
       </div>
       <div class="form-row"><label>Tags</label><input type="text" id="newTags" placeholder="tag1, tag2, ..." spellcheck="false" autocomplete="off" /></div>
     </div>
@@ -3508,6 +3901,21 @@ body { display: flex; flex-direction: column; height: 100vh; }
           <div class="icon-input" style="margin-bottom:6px"><span class="icon-prefix"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></span><input type="text" id="editXLink" spellcheck="false" /></div>
           <div class="icon-input"><span class="icon-prefix"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></span><input type="text" id="editLinkedInLink" spellcheck="false" /></div>
         </div>
+      </div>
+      <div id="editDocumentFields" class="hidden">
+        <div class="form-row"><label>Title</label><input type="text" id="editDocTitle" /></div>
+        <div class="form-row"><label>Format</label>
+          <select id="editDocFormat" style="width:100%;padding:8px 10px;font-size:0.85rem;background:var(--input-bg);border:1px solid var(--input-border);border-radius:4px;color:var(--input-text);outline:none;font-family:inherit">
+            <option value="text/markdown">Markdown</option>
+            <option value="text/html">HTML</option>
+            <option value="text/plain">Plain Text</option>
+          </select>
+        </div>
+        <div class="form-row"><label>Content</label>
+          <input type="file" id="editDocFile" accept=".md,.markdown,.html,.htm,.txt,.text" style="font-size:0.78rem;color:var(--panel-text);margin-bottom:6px" />
+          <textarea id="editDocContent" rows="10" style="width:100%;font-family:'SFMono-Regular',Consolas,monospace;font-size:0.82rem;padding:8px 10px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:4px;color:var(--input-text);resize:vertical;outline:none"></textarea>
+        </div>
+        <div class="form-row"><label>Owner</label><input type="text" id="editDocOwner" spellcheck="false" /></div>
       </div>
       <div class="form-row"><label>Tags</label><input type="text" id="editTags" placeholder="tag1, tag2, ..." spellcheck="false" autocomplete="off" /></div>
       <div class="stat-row">
@@ -3776,13 +4184,16 @@ function sortLinx(arr) {
 }
 
 function itemSearchText(item) {
+  if (item.type === 'document') {
+    return [item.shortName, item.description, item.owner, item.tags].join(' ').toLowerCase();
+  }
   if (item.type !== 'link') {
     return [item.shortName, item.firstName, item.lastName, item.email, item.tags].join(' ').toLowerCase();
   }
   return [item.shortName, item.destinationURL, item.description, item.owner, item.tags].join(' ').toLowerCase();
 }
 
-var typeAliases = {e:'employee',c:'customer',v:'vendor',l:'link'};
+var typeAliases = {e:'employee',c:'customer',v:'vendor',l:'link',d:'document'};
 
 function filterLinx() {
   var q = document.getElementById('searchInput').value.trim();
@@ -3938,7 +4349,7 @@ function renderDailyClicksChart(days) {
   el.innerHTML = '<div class="daily-chart">' + barsHtml + '</div><div class="daily-labels">' + labels + '</div>';
 }
 
-var badgeLabels = {employee: 'Emp', customer: 'Cus', vendor: 'Ven'};
+var badgeLabels = {employee: 'Emp', customer: 'Cus', vendor: 'Ven', document: 'Doc'};
 function typeBadge(t) {
   return badgeLabels[t] || t.charAt(0).toUpperCase() + t.slice(1);
 }
@@ -3960,6 +4371,23 @@ function renderPersonLinx(c) {
     + renderTags(c.tags)
     + '<div class="linx-meta"><span></span><span class="linx-badge">' + escHtml(typeBadge(c.type)) + '</span></div>'
     + '</div>';
+}
+
+function renderDocumentLinx(c) {
+  var docIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
+  var dcStyle = c.color ? ' style="border-left-color:' + c.color + '"' : '';
+  return '<div class="linx-item doc-linx" data-id="' + c.id + '"' + dcStyle + ' tabindex="0" oncontextmenu="showCtxMenu(event,' + c.id + ')" ondblclick="dblClickLinx(' + c.id + ')">'
+    + '<div class="doc-linx-body">'
+    + '<div class="doc-icon">' + docIcon + '</div>'
+    + '<div class="doc-info">'
+    + '<span class="linx-shortname">' + escHtml(c.description || c.shortName) + '</span>'
+    + '<div class="doc-short">/' + escHtml(c.shortName) + '</div>'
+    + '</div></div>'
+    + renderTags(c.tags)
+    + '<div class="linx-meta">'
+    + (c.owner ? '<span class="linx-owner">' + escHtml(c.owner) + '</span>' : '<span></span>')
+    + '<span class="linx-badge">' + escHtml(typeBadge(c.type)) + '</span>'
+    + '</div></div>';
 }
 
 function renderTags(tags) {
@@ -4059,6 +4487,10 @@ function renderGrid() {
   var html = '';
   for (var i = 0; i < filteredLinx.length; i++) {
     var item = filteredLinx[i];
+    if (item.type === 'document') {
+      html += renderDocumentLinx(item);
+      continue;
+    }
     if (item.type !== 'link') {
       html += renderPersonLinx(item);
       continue;
@@ -4239,6 +4671,11 @@ function showNewLinxModal() {
   document.getElementById('newCalLink').value = '';
   document.getElementById('newXLink').value = '';
   document.getElementById('newLinkedInLink').value = '';
+  document.getElementById('newDocTitle').value = '';
+  document.getElementById('newDocFormat').value = 'text/markdown';
+  document.getElementById('newDocContent').value = '';
+  document.getElementById('newDocFile').value = '';
+  document.getElementById('newDocOwner').value = _currentUserLogin;
   document.getElementById('newTags').value = '';
   pickColor('new', '');
   toggleNewLinxType();
@@ -4254,12 +4691,16 @@ function closeNewLinxModal() {
 
 function toggleNewLinxType() {
   var t = document.getElementById('newType').value;
+  document.getElementById('newLinkFields').classList.add('hidden');
+  document.getElementById('newPersonFields').classList.add('hidden');
+  document.getElementById('newDocumentFields').classList.add('hidden');
   if (t === 'link') {
     document.getElementById('newLinkFields').classList.remove('hidden');
-    document.getElementById('newPersonFields').classList.add('hidden');
+    document.getElementById('btnGenerate').style.display = '';
+  } else if (t === 'document') {
+    document.getElementById('newDocumentFields').classList.remove('hidden');
     document.getElementById('btnGenerate').style.display = '';
   } else {
-    document.getElementById('newLinkFields').classList.add('hidden');
     document.getElementById('newPersonFields').classList.remove('hidden');
     document.getElementById('btnGenerate').style.display = 'none';
   }
@@ -4346,6 +4787,25 @@ function saveNewLinx() {
       owner: document.getElementById('newOwner').value.trim(),
       color: color
     };
+  } else if (linxType === 'document') {
+    var docTitle = document.getElementById('newDocTitle').value.trim();
+    var docContent = document.getElementById('newDocContent').value;
+    var docFormat = document.getElementById('newDocFormat').value;
+    if (!shortName || !docTitle) {
+      showToast('Short Name and Title are required', 'error');
+      return;
+    }
+    if (!docContent) {
+      showToast('Document content is required', 'error');
+      return;
+    }
+    var data = {
+      type: 'document', shortName: shortName, description: docTitle,
+      owner: document.getElementById('newDocOwner').value.trim(),
+      color: color
+    };
+    var _docContent = docContent;
+    var _docFormat = docFormat;
   } else {
     var firstName = document.getElementById('newFirstName').value.trim();
     if (!shortName || !firstName) {
@@ -4374,6 +4834,16 @@ function saveNewLinx() {
   }).then(function(r) {
     if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
     return r.json();
+  }).then(function(created) {
+    if (linxType === 'document') {
+      return fetch('/api/linx/' + created.id + '/document', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: _docContent, mime: _docFormat})
+      }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+      });
+    }
   }).then(function() {
     closeNewLinxModal();
     loadLinx();
@@ -4389,16 +4859,32 @@ function showEditModal(lnx, readonly) {
   editingLinxType = lnx.type;
   document.getElementById('editShortName').value = lnx.shortName;
 
+  document.getElementById('editLinkFields').classList.add('hidden');
+  document.getElementById('editPersonFields').classList.add('hidden');
+  document.getElementById('editDocumentFields').classList.add('hidden');
+
   if (lnx.type === 'link') {
     document.getElementById('editModalTitle').textContent = readonly ? 'Linx Info' : 'Edit Linx';
     document.getElementById('editLinkFields').classList.remove('hidden');
-    document.getElementById('editPersonFields').classList.add('hidden');
     document.getElementById('editDestURL').value = lnx.destinationURL;
     document.getElementById('editDescription').value = lnx.description || '';
     document.getElementById('editOwner').value = lnx.owner || '';
+  } else if (lnx.type === 'document') {
+    document.getElementById('editModalTitle').textContent = readonly ? 'Document Info' : 'Edit Document';
+    document.getElementById('editDocumentFields').classList.remove('hidden');
+    document.getElementById('editDocTitle').value = lnx.description || '';
+    document.getElementById('editDocOwner').value = lnx.owner || '';
+    document.getElementById('editDocFormat').value = lnx.documentMime || 'text/markdown';
+    document.getElementById('editDocContent').value = '';
+    document.getElementById('editDocFile').value = '';
+    fetch('/api/linx/' + lnx.id + '/document').then(function(r) {
+      if (r.ok) return r.text();
+      return '';
+    }).then(function(text) {
+      document.getElementById('editDocContent').value = text || '';
+    }).catch(function() {});
   } else {
     document.getElementById('editModalTitle').textContent = readonly ? 'Linx Info' : ('Edit ' + typeBadge(lnx.type));
-    document.getElementById('editLinkFields').classList.add('hidden');
     document.getElementById('editPersonFields').classList.remove('hidden');
     document.getElementById('editFirstName').value = lnx.firstName;
     document.getElementById('editLastName').value = lnx.lastName || '';
@@ -4451,6 +4937,25 @@ document.getElementById('editAvatarFile').addEventListener('change', function() 
   reader.readAsDataURL(file);
 });
 
+function handleDocFileUpload(fileInputId, formatSelectId, contentTextareaId) {
+  document.getElementById(fileInputId).addEventListener('change', function() {
+    var file = this.files && this.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      document.getElementById(contentTextareaId).value = e.target.result;
+    };
+    reader.readAsText(file);
+    var name = file.name.toLowerCase();
+    var sel = document.getElementById(formatSelectId);
+    if (name.endsWith('.md') || name.endsWith('.markdown')) sel.value = 'text/markdown';
+    else if (name.endsWith('.html') || name.endsWith('.htm')) sel.value = 'text/html';
+    else sel.value = 'text/plain';
+  });
+}
+handleDocFileUpload('newDocFile', 'newDocFormat', 'newDocContent');
+handleDocFileUpload('editDocFile', 'editDocFormat', 'editDocContent');
+
 function closeEditModal() {
   document.getElementById('editOverlay').classList.add('hidden');
   document.getElementById('editShortNameHints').classList.add('hidden');
@@ -4471,6 +4976,15 @@ function saveEditLinx() {
       showToast('Short Name and Destination URL are required', 'error');
       return;
     }
+  } else if (editingLinxType === 'document') {
+    data.description = document.getElementById('editDocTitle').value.trim();
+    data.owner = document.getElementById('editDocOwner').value.trim();
+    if (!shortName || !data.description) {
+      showToast('Short Name and Title are required', 'error');
+      return;
+    }
+    var _editDocContent = document.getElementById('editDocContent').value;
+    var _editDocFormat = document.getElementById('editDocFormat').value;
   } else {
     data.firstName = document.getElementById('editFirstName').value.trim();
     data.lastName = document.getElementById('editLastName').value.trim();
@@ -4487,7 +5001,9 @@ function saveEditLinx() {
     }
   }
 
-  fetch('/api/linx/' + editingLinxId, {
+  var _editId = editingLinxId;
+  var _editType = editingLinxType;
+  fetch('/api/linx/' + _editId, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(data)
@@ -4495,12 +5011,20 @@ function saveEditLinx() {
     if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
     return r.json();
   }).then(function() {
-    if (editingLinxType !== 'link') {
+    if (_editType === 'document') {
+      return fetch('/api/linx/' + _editId + '/document', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: _editDocContent, mime: _editDocFormat})
+      }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+      });
+    } else if (_editType !== 'link') {
       var fileInput = document.getElementById('editAvatarFile');
       if (fileInput.files && fileInput.files[0]) {
         var fd = new FormData();
         fd.append('avatar', fileInput.files[0]);
-        return fetch('/api/linx/' + editingLinxId + '/avatar', {
+        return fetch('/api/linx/' + _editId + '/avatar', {
           method: 'POST', body: fd
         });
       }
@@ -4518,7 +5042,7 @@ function saveEditLinx() {
 function showDeleteModal(lnx) {
   deletingLinxId = lnx.id;
   document.getElementById('deleteShortName').textContent = lnx.shortName;
-  var subtitle = lnx.type === 'link' ? lnx.destinationURL : (lnx.firstName + ' ' + lnx.lastName);
+  var subtitle = lnx.type === 'link' ? lnx.destinationURL : lnx.type === 'document' ? (lnx.description || 'Document') : (lnx.firstName + ' ' + lnx.lastName);
   document.getElementById('deleteSubtitle').textContent = subtitle;
   document.getElementById('deleteModalTitle').textContent = 'Delete ' + (lnx.type === 'link' ? 'Link' : typeBadge(lnx.type));
   document.getElementById('deleteOverlay').classList.remove('hidden');

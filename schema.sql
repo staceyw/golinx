@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS Linx (
     LinkedInLink    TEXT    NOT NULL DEFAULT '',
     AvatarData      BLOB,
     AvatarMime      TEXT    NOT NULL DEFAULT '',
+    DocumentData    BLOB,
+    DocumentMime    TEXT    NOT NULL DEFAULT '',
     Color           TEXT    NOT NULL DEFAULT '',
     Tags            TEXT    NOT NULL DEFAULT '',
     DateCreated     INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))

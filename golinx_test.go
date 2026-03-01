@@ -67,6 +67,8 @@ func testLinx() []*Linx {
 		{Type: LinxTypeEmployee, ShortName: "john", FirstName: "John", LastName: "Doe", Title: "Engineer", Email: "john@example.com", Phone: "555-1234", Owner: "test@example.com"},
 		{Type: LinxTypeCustomer, ShortName: "acme", FirstName: "Acme", LastName: "Corp", Email: "contact@acme.com", Owner: "test@example.com"},
 		{Type: LinxTypeVendor, ShortName: "vendor1", FirstName: "Vendor", LastName: "One", Email: "v1@vendor.com", Owner: "test@example.com"},
+		// Documents
+		{Type: LinxTypeDocument, ShortName: "readme", Description: "Project README", Owner: "test@example.com"},
 	}
 }
 
@@ -2126,6 +2128,182 @@ func TestDeletedPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "Undelete") {
 		t.Error("deleted page should contain 'Undelete' button")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Document type tests
+// ---------------------------------------------------------------------------
+
+func TestDocumentCreate(t *testing.T) {
+	resetDB(t)
+	mux := serveHandler()
+
+	// Create a document linx.
+	w := doJSON(t, mux, "POST", "/api/linx", map[string]string{
+		"type": "document", "shortName": "doc1", "description": "Test Doc",
+	})
+	if w.Code != 201 {
+		t.Fatalf("status = %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+	var lnx Linx
+	json.Unmarshal(w.Body.Bytes(), &lnx)
+	if lnx.Type != LinxTypeDocument {
+		t.Errorf("type = %q, want %q", lnx.Type, LinxTypeDocument)
+	}
+
+	// Upload content.
+	w = doJSON(t, mux, "POST", fmt.Sprintf("/api/linx/%d/document", lnx.ID), map[string]string{
+		"content": "# Hello World", "mime": "text/markdown",
+	})
+	if w.Code != 200 {
+		t.Fatalf("upload status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDocumentRead(t *testing.T) {
+	resetDB(t)
+	mux := serveHandler()
+
+	// Create and upload.
+	w := doJSON(t, mux, "POST", "/api/linx", map[string]string{
+		"type": "document", "shortName": "doc2", "description": "Read Test",
+	})
+	var lnx Linx
+	json.Unmarshal(w.Body.Bytes(), &lnx)
+
+	content := "Some **bold** text"
+	doJSON(t, mux, "POST", fmt.Sprintf("/api/linx/%d/document", lnx.ID), map[string]string{
+		"content": content, "mime": "text/markdown",
+	})
+
+	// Read back raw content.
+	w = doRequest(t, mux, "GET", fmt.Sprintf("/api/linx/%d/document", lnx.ID))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Body.String(); got != content {
+		t.Errorf("content = %q, want %q", got, content)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q, want text/markdown", ct)
+	}
+}
+
+func TestDocumentRendering(t *testing.T) {
+	resetDB(t)
+	mux := serveHandler()
+
+	// Create and upload markdown.
+	w := doJSON(t, mux, "POST", "/api/linx", map[string]string{
+		"type": "document", "shortName": "mddoc", "description": "Markdown Doc",
+	})
+	var lnx Linx
+	json.Unmarshal(w.Body.Bytes(), &lnx)
+
+	doJSON(t, mux, "POST", fmt.Sprintf("/api/linx/%d/document", lnx.ID), map[string]string{
+		"content": "# Hello", "mime": "text/markdown",
+	})
+
+	// Access the reader page.
+	w = doRequest(t, mux, "GET", "/mddoc")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "<h1>Hello</h1>") {
+		t.Error("rendered page should contain <h1>Hello</h1>")
+	}
+	if !strings.Contains(body, "Markdown Doc") {
+		t.Error("rendered page should contain document title")
+	}
+}
+
+func TestDocumentHTMLSanitization(t *testing.T) {
+	resetDB(t)
+	mux := serveHandler()
+
+	w := doJSON(t, mux, "POST", "/api/linx", map[string]string{
+		"type": "document", "shortName": "xssdoc", "description": "XSS Test",
+	})
+	var lnx Linx
+	json.Unmarshal(w.Body.Bytes(), &lnx)
+
+	doJSON(t, mux, "POST", fmt.Sprintf("/api/linx/%d/document", lnx.ID), map[string]string{
+		"content": "<p>Safe</p><script>alert(1)</script>", "mime": "text/html",
+	})
+
+	w = doRequest(t, mux, "GET", "/xssdoc")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "<script>") {
+		t.Error("rendered page should NOT contain <script> tags")
+	}
+	if !strings.Contains(body, "Safe") {
+		t.Error("rendered page should contain safe content")
+	}
+}
+
+func TestDocumentValidation(t *testing.T) {
+	resetDB(t)
+	mux := serveHandler()
+
+	// Missing description should fail.
+	w := doJSON(t, mux, "POST", "/api/linx", map[string]string{
+		"type": "document", "shortName": "nodesc",
+	})
+	if w.Code != 400 {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestDocumentUploadInvalidMime(t *testing.T) {
+	resetDB(t)
+	mux := serveHandler()
+
+	w := doJSON(t, mux, "POST", "/api/linx", map[string]string{
+		"type": "document", "shortName": "badmime", "description": "Bad Mime",
+	})
+	var lnx Linx
+	json.Unmarshal(w.Body.Bytes(), &lnx)
+
+	// Invalid mime type defaults to text/markdown.
+	doJSON(t, mux, "POST", fmt.Sprintf("/api/linx/%d/document", lnx.ID), map[string]string{
+		"content": "hello", "mime": "application/pdf",
+	})
+
+	w = doRequest(t, mux, "GET", fmt.Sprintf("/api/linx/%d/document", lnx.ID))
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q, want text/markdown (default for invalid mime)", ct)
+	}
+}
+
+func TestDocumentPlainText(t *testing.T) {
+	resetDB(t)
+	mux := serveHandler()
+
+	w := doJSON(t, mux, "POST", "/api/linx", map[string]string{
+		"type": "document", "shortName": "txtdoc", "description": "Plain Text",
+	})
+	var lnx Linx
+	json.Unmarshal(w.Body.Bytes(), &lnx)
+
+	doJSON(t, mux, "POST", fmt.Sprintf("/api/linx/%d/document", lnx.ID), map[string]string{
+		"content": "Hello <world> & friends", "mime": "text/plain",
+	})
+
+	w = doRequest(t, mux, "GET", "/txtdoc")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	// Plain text should be HTML-escaped in a <pre> block.
+	if !strings.Contains(body, "&lt;world&gt;") {
+		t.Error("plain text should be HTML-escaped")
 	}
 }
 

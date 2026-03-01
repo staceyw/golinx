@@ -18,9 +18,10 @@ const (
 	LinxTypeEmployee = "employee"
 	LinxTypeCustomer = "customer"
 	LinxTypeVendor   = "vendor"
+	LinxTypeDocument = "document"
 )
 
-// Linx represents any item in GoLinx: a link, employee, customer, or vendor.
+// Linx represents any item in GoLinx: a link, person, or document.
 type Linx struct {
 	ID             int64  `json:"id"`
 	Type           string `json:"type"`
@@ -40,6 +41,7 @@ type Linx struct {
 	XLink        string `json:"xLink"`
 	LinkedInLink string `json:"linkedInLink"`
 	AvatarMime     string `json:"avatarMime,omitempty"`
+	DocumentMime   string `json:"documentMime,omitempty"`
 	Color          string `json:"color"`
 	Tags           string `json:"tags"`
 	DateCreated    int64  `json:"dateCreated"`
@@ -51,14 +53,19 @@ func (c *Linx) IsPersonType() bool {
 	return c.Type == LinxTypeEmployee || c.Type == LinxTypeCustomer || c.Type == LinxTypeVendor
 }
 
-const linxColumns = `ID, Type, ShortName, DestinationURL, Description, Owner, LastClicked, ClickCount, FirstName, LastName, Title, Email, Phone, WebLink, CalLink, XLink, LinkedInLink, AvatarMime, Color, Tags, DateCreated, DeletedAt`
+// IsDocumentType returns true for the document linx type.
+func (c *Linx) IsDocumentType() bool {
+	return c.Type == LinxTypeDocument
+}
+
+const linxColumns = `ID, Type, ShortName, DestinationURL, Description, Owner, LastClicked, ClickCount, FirstName, LastName, Title, Email, Phone, WebLink, CalLink, XLink, LinkedInLink, AvatarMime, DocumentMime, Color, Tags, DateCreated, DeletedAt`
 
 func scanLinx(scanner interface{ Scan(dest ...any) error }) (*Linx, error) {
 	c := new(Linx)
 	err := scanner.Scan(&c.ID, &c.Type, &c.ShortName, &c.DestinationURL,
 		&c.Description, &c.Owner, &c.LastClicked, &c.ClickCount,
 		&c.FirstName, &c.LastName, &c.Title, &c.Email, &c.Phone,
-		&c.WebLink, &c.CalLink, &c.XLink, &c.LinkedInLink, &c.AvatarMime, &c.Color, &c.Tags, &c.DateCreated, &c.DeletedAt)
+		&c.WebLink, &c.CalLink, &c.XLink, &c.LinkedInLink, &c.AvatarMime, &c.DocumentMime, &c.Color, &c.Tags, &c.DateCreated, &c.DeletedAt)
 	return c, err
 }
 
@@ -101,6 +108,8 @@ func NewSQLiteDB(f string) (*SQLiteDB, error) {
 		"ALTER TABLE Linx ADD COLUMN Color TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE Linx ADD COLUMN Tags TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE Linx ADD COLUMN DeletedAt INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE Linx ADD COLUMN DocumentData BLOB",
+		"ALTER TABLE Linx ADD COLUMN DocumentMime TEXT NOT NULL DEFAULT ''",
 	} {
 		db.Exec(col) // ignore "duplicate column" errors
 	}
@@ -501,6 +510,42 @@ func (s *SQLiteDB) LoadAvatar(id int64) ([]byte, string, error) {
 	var data []byte
 	var mime string
 	err := s.db.QueryRow("SELECT AvatarData, AvatarMime FROM Linx WHERE ID = ?", id).Scan(&data, &mime)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, "", fs.ErrNotExist
+		}
+		return nil, "", err
+	}
+	return data, mime, nil
+}
+
+// SaveDocument updates the document content for a linx.
+func (s *SQLiteDB) SaveDocument(id int64, data []byte, mime string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec("UPDATE Linx SET DocumentData = ?, DocumentMime = ? WHERE ID = ?", data, mime, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fs.ErrNotExist
+	}
+	return nil
+}
+
+// LoadDocument returns the document content and MIME type for a linx.
+func (s *SQLiteDB) LoadDocument(id int64) ([]byte, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var data []byte
+	var mime string
+	err := s.db.QueryRow("SELECT DocumentData, DocumentMime FROM Linx WHERE ID = ?", id).Scan(&data, &mime)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", fs.ErrNotExist
